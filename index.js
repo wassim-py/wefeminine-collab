@@ -1,5 +1,17 @@
 // AeroFlex Application JavaScript
 
+// --- CLOUD DATABASE CONFIGURATION (SUPABASE) ---
+// Go to supabase.com -> Project Settings -> API, and copy/paste your keys here:
+const SUPABASE_URL = "https://rjnbiplmefbnbaxtxvkf.supabase.co"; 
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqbmJpcGxtZWZibmJheHR4dmtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NDU5NDksImV4cCI6MjEwMDAyMTk0OX0.rMMJ5nvF2Mx5D7nziYVrcULy03NOBFUCkW2bxFka-6o";
+
+let supabaseClient = null;
+let globalDb = null;
+
+if (SUPABASE_URL && SUPABASE_ANON_KEY && typeof supabase !== 'undefined') {
+    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
+
 // --- DATABASE MANAGEMENT (localStorage wrapper) ---
 const DB_KEY = 'aeroflex_store_db';
 const AUTH_KEY = 'aeroflex_admin_authenticated';
@@ -114,17 +126,66 @@ async function sha256(message) {
     return hashHex;
 }
 
-// Initialize database
-function getDb() {
+// --- SUPABASE CLOUD SYNC OPERATIONS ---
+async function fetchDbFromSupabase() {
+    if (!supabaseClient) {
+        console.log('Supabase client not initialized. Using localStorage.');
+        globalDb = getLocalStorageDb();
+        return;
+    }
+    
+    try {
+        const { data, error } = await supabaseClient
+            .from('store_db')
+            .select('data')
+            .eq('id', 1)
+            .single();
+            
+        if (error) throw error;
+        
+        if (data && data.data && Object.keys(data.data).length > 0) {
+            globalDb = sanitizeDb(data.data);
+            console.log('Database loaded successfully from Supabase Cloud.');
+        } else {
+            console.warn('Supabase row empty. Seeding cloud database with defaults...');
+            globalDb = DEFAULT_DB;
+            await syncDbToSupabase(DEFAULT_DB);
+        }
+    } catch (err) {
+        console.error('Failed to load Supabase cloud data. Falling back to local cache:', err);
+        globalDb = getLocalStorageDb();
+    }
+}
+
+async function syncDbToSupabase(db) {
+    // Always save to localStorage as local backup
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+    
+    if (!supabaseClient) return;
+    
+    try {
+        const { error } = await supabaseClient
+            .from('store_db')
+            .update({ data: db })
+            .eq('id', 1);
+            
+        if (error) throw error;
+    } catch (err) {
+        console.error('Failed to sync database to Supabase Cloud:', err);
+        showToast('Offline backup updated locally.', 'info');
+    }
+}
+
+function getLocalStorageDb() {
     let db = localStorage.getItem(DB_KEY);
     if (!db) {
         localStorage.setItem(DB_KEY, JSON.stringify(DEFAULT_DB));
         return DEFAULT_DB;
     }
-    
-    let parsed = JSON.parse(db);
-    
-    // Backward compatibility patching
+    return sanitizeDb(JSON.parse(db));
+}
+
+function sanitizeDb(parsed) {
     let needsSave = false;
     
     if (!parsed.security || parsed.security.hash === '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' || parsed.security.hash === '240a10a68a82ea11761c2fef09ca512f45e9940657750127f56d499855b19e12') {
@@ -143,15 +204,23 @@ function getDb() {
         needsSave = true;
     }
     
-    // Ensure all products have images array
+    if (!parsed.products || !Array.isArray(parsed.products)) {
+        parsed.products = DEFAULT_DB.products;
+        needsSave = true;
+    }
+    
     parsed.products.forEach(p => {
         if (!p.images || !Array.isArray(p.images)) {
             p.images = p.image ? [p.image] : ['assets/hero_leggings.jpg'];
             needsSave = true;
         }
     });
+    
+    if (!parsed.orders) {
+        parsed.orders = [];
+        needsSave = true;
+    }
 
-    // Patch existing orders if they lack shipping info
     parsed.orders.forEach(o => {
         if (o.shippingName === undefined) {
             o.shippingName = 'Standard Delivery';
@@ -160,17 +229,39 @@ function getDb() {
         }
     });
     
-    if (needsSave) {
+    if (!parsed.promoCodes) {
+        parsed.promoCodes = [];
+        needsSave = true;
+    }
+    
+    if (!parsed.stock) {
+        parsed.stock = DEFAULT_DB.stock;
+        needsSave = true;
+    }
+    
+    if (needsSave && !supabaseClient) {
         localStorage.setItem(DB_KEY, JSON.stringify(parsed));
     }
+    
     return parsed;
 }
 
+function getDb() {
+    if (!globalDb) {
+        globalDb = getLocalStorageDb();
+    }
+    return globalDb;
+}
+
 function saveDb(db) {
-    localStorage.setItem(DB_KEY, JSON.stringify(db));
-    // Trigger renders across views
+    globalDb = db;
+    
+    // Trigger renders synchronously for instant UI updates
     renderPublicStore();
     renderAdminDashboard();
+    
+    // Background async sync to Supabase Cloud
+    syncDbToSupabase(db);
 }
 
 // --- STATE MANAGEMENT ---
@@ -188,8 +279,8 @@ let lastActivityTime = Date.now();
 const INACTIVITY_TIMEOUT = 10 * 60 * 1000; // 10 minutes in milliseconds
 
 // --- INITIAL LOADING ---
-document.addEventListener('DOMContentLoaded', () => {
-    getDb(); // seed database if empty
+document.addEventListener('DOMContentLoaded', async () => {
+    await fetchDbFromSupabase(); // Wait for cloud database fetch
     
     // Setup routing and tab listeners
     initNavigation();
