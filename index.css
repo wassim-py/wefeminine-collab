@@ -1482,49 +1482,71 @@ li {
 
 /* --- ADMIN VIEW LAYOUT --- */
 #admin-view {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 260px 1fr;
     min-height: 100vh;
     background: #ffffff;
 }
 
-/* Admin Header Top Bar Nav */
+/* Admin Sidebar Header (Large Screens) */
 .admin-nav-header {
-    position: fixed;
+    position: sticky;
     top: 0;
-    left: 0;
-    right: 0;
-    height: 90px;
+    height: 100vh;
     background: #faf6f3;
-    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    border-bottom: none;
     z-index: 100;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    padding: 32px 0;
+    align-items: stretch;
     transition: var(--transition);
+}
+
+.admin-nav-header .nav-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 36px;
+    padding: 0 24px;
+    width: 100%;
+}
+
+.admin-nav-header .logo {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
 }
 
 .admin-nav-links {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    flex: 1;
 }
 
 .admin-nav-links .admin-nav-item {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     background: none;
     border: none;
     color: var(--text-secondary);
-    padding: 8px 14px;
+    padding: 12px 16px;
     border-radius: var(--radius-sm);
     font-family: var(--font-heading);
     font-weight: 500;
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     cursor: pointer;
     transition: var(--transition);
     text-transform: none;
     letter-spacing: normal;
+    text-align: left;
+    width: 100%;
 }
 
 .admin-nav-links .admin-nav-item:hover,
@@ -1533,47 +1555,19 @@ li {
     background: rgba(220, 164, 150, 0.08);
 }
 
-/* Admin Mobile Menu Hamburger Drawer */
+.admin-nav-links .nav-admin-btn {
+    margin-top: auto; /* Push logout to the bottom */
+    margin-left: 0 !important;
+}
+
+/* Hide mobile toggle on desktop */
+.admin-nav-header .mobile-nav-toggle {
+    display: none;
+}
+
+/* Admin Mobile Menu (Hidden on Desktop) */
 .admin-mobile-menu {
-    position: fixed;
-    top: 90px; /* Aligned with admin header height */
-    left: 0;
-    right: 0;
-    background: rgba(250, 246, 243, 0.98);
-    border-bottom: 1px solid var(--border);
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    z-index: 99;
-    transform: translateY(-120%);
-    transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-.admin-mobile-menu.open {
-    transform: translateY(0);
-}
-
-.admin-mobile-menu .admin-nav-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    padding: 12px 16px;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-family: var(--font-heading);
-    font-weight: 500;
-    font-size: 0.95rem;
-    text-align: left;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-}
-
-.admin-mobile-menu .admin-nav-item.active {
-    color: var(--primary-hover);
-    background: rgba(220, 164, 150, 0.08);
+    display: none;
 }
 
 .admin-pill {
@@ -1589,7 +1583,7 @@ li {
 }
 
 .admin-badge {
-    margin-left: 6px;
+    margin-left: auto; /* Push badge to the right of the button */
     font-size: 0.7rem;
     background: var(--primary);
     color: white;
@@ -1599,12 +1593,12 @@ li {
     display: inline-block;
 }
 
-/* Admin Main Workspace */
+/* Admin Main Workspace (Large Screens) */
 .admin-main {
     display: flex;
     flex-direction: column;
     flex: 1;
-    padding-top: 90px;
+    padding-top: 0;
     background: #ffffff;
 }
 
@@ -2170,16 +2164,82 @@ input:checked + .slider:before {
     }
     
     /* Admin view mobile adaptions */
+    #admin-view {
+        display: flex;
+        flex-direction: column;
+    }
+    
     .admin-nav-header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
         height: 85px;
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 0;
+        flex-direction: row;
+        align-items: center;
+    }
+
+    .admin-nav-header .nav-container {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        height: 100%;
+        padding: 0 20px;
+        gap: 0;
     }
 
     .admin-nav-links {
         display: none !important;
     }
 
+    .admin-nav-header .mobile-nav-toggle {
+        display: flex;
+    }
+
     .admin-mobile-menu {
-        top: 85px;
+        display: flex;
+        position: fixed;
+        top: 85px; /* Aligned with mobile header */
+        left: 0;
+        right: 0;
+        background: rgba(250, 246, 243, 0.98);
+        border-bottom: 1px solid var(--border);
+        padding: 20px;
+        flex-direction: column;
+        gap: 8px;
+        z-index: 99;
+        transform: translateY(-120%);
+        transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    .admin-mobile-menu.open {
+        transform: translateY(0);
+    }
+
+    .admin-mobile-menu .admin-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        padding: 12px 16px;
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        font-family: var(--font-heading);
+        font-weight: 500;
+        font-size: 0.95rem;
+        text-align: left;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+    }
+
+    .admin-mobile-menu .admin-nav-item.active {
+        color: var(--primary-hover);
+        background: rgba(220, 164, 150, 0.08);
     }
 
     .admin-main {
