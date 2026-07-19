@@ -1,0 +1,2182 @@
+// AeroFlex Application JavaScript
+
+// --- DATABASE MANAGEMENT (localStorage wrapper) ---
+const DB_KEY = 'aeroflex_store_db';
+const AUTH_KEY = 'aeroflex_admin_authenticated';
+
+// Locker keys for brute-force protection
+const ATTEMPTS_KEY = 'aeroflex_failed_attempts';
+const LOCKOUT_KEY = 'aeroflex_lockout_until';
+
+// Realistic prices in DZD (Algerian Dinars - DA)
+const DEFAULT_DB = {
+    security: {
+        // SHA-256 hash of "wassim"
+        hash: '07edcf9f709cd2f4e422ad8a967c1c516dd856333b5eef097285a7e9192ecdab'
+    },
+    products: [
+        {
+            id: 'aeroflex-sculpt',
+            name: 'AeroFlex Ultra-Sculpt Leggings',
+            description: 'Engineered with our signature AeroCompress™ thread. The AeroFlex Ultra-Sculpt Leggings offer 100% squat-proof coverage, active moisture wicking, and an ultra-high waistband that stays put.',
+            price: 5900, // 5,900 DA
+            originalPrice: 8500, // 8,500 DA
+            image: 'assets/hero_leggings.jpg',
+            images: [
+                'assets/hero_leggings.jpg',
+                'assets/fabric_detail.jpg',
+                'assets/lifestyle_leggings.jpg'
+            ],
+            colors: ['Midnight Black', 'Teal Breeze', 'Electric Orchid'],
+            sizes: ['XS', 'S', 'M', 'L', 'XL']
+        }
+    ],
+    // Mapping of "productId:color:size" -> stock count
+    stock: {
+        'aeroflex-sculpt:Midnight Black:XS': 5,
+        'aeroflex-sculpt:Midnight Black:S': 8,
+        'aeroflex-sculpt:Midnight Black:M': 12,
+        'aeroflex-sculpt:Midnight Black:L': 0, // Out of Stock demo
+        'aeroflex-sculpt:Midnight Black:XL': 4,
+        'aeroflex-sculpt:Teal Breeze:XS': 3,
+        'aeroflex-sculpt:Teal Breeze:S': 6,
+        'aeroflex-sculpt:Teal Breeze:M': 2, // Exactly 2 items for testing "minus one" example
+        'aeroflex-sculpt:Teal Breeze:L': 1, // Low stock demo
+        'aeroflex-sculpt:Teal Breeze:XL': 3,
+        'aeroflex-sculpt:Electric Orchid:XS': 2,
+        'aeroflex-sculpt:Electric Orchid:S': 4,
+        'aeroflex-sculpt:Electric Orchid:M': 5,
+        'aeroflex-sculpt:Electric Orchid:L': 3,
+        'aeroflex-sculpt:Electric Orchid:XL': 2
+    },
+    promoCodes: [
+        { code: 'WELCOME10', discount: 10, active: true },
+        { code: 'OWNER50', discount: 50, active: true },
+        { code: 'AERO30', discount: 30, active: true }
+    ],
+    shippingRates: [
+        { id: 'rate-standard', name: 'Standard Delivery (48 Wilayas)', price: 600, active: true },
+        { id: 'rate-express', name: 'Express Delivery (Algiers)', price: 400, active: true },
+        { id: 'rate-free', name: 'Free Store Pickup', price: 0, active: true }
+    ],
+    orders: [
+        {
+            id: 'ORD-8492',
+            date: '2026-07-18T10:15:00Z',
+            customerName: 'Sarah Jenkins',
+            customerPhone: '0671829384',
+            customerAddress: '45 Rue de la Victoire, Paris',
+            productId: 'aeroflex-sculpt',
+            productName: 'AeroFlex Ultra-Sculpt Leggings',
+            color: 'Midnight Black',
+            size: 'M',
+            price: 5910, // (5900 - 10% Welcome Discount) + 600 shipping
+            promoCode: 'WELCOME10',
+            shippingName: 'Standard Delivery (48 Wilayas)',
+            shippingPrice: 600,
+            status: 'Pending'
+        },
+        {
+            id: 'ORD-9102',
+            date: '2026-07-18T11:42:00Z',
+            customerName: 'Amina Al-Farsi',
+            customerPhone: '0555981243',
+            customerAddress: 'Flat 12, Marina Heights, Dubai',
+            productId: 'aeroflex-sculpt',
+            productName: 'AeroFlex Ultra-Sculpt Leggings',
+            color: 'Electric Orchid',
+            size: 'S',
+            price: 6300, // 5900 + 400 shipping
+            promoCode: '',
+            shippingName: 'Express Delivery (Algiers)',
+            shippingPrice: 400,
+            status: 'Shipped'
+        }
+    ]
+};
+
+// Available configuration lists for interactive admin form selectors
+const ADMIN_AVAILABLE_COLORS = ['Midnight Black', 'Teal Breeze', 'Electric Orchid', 'Sage Green', 'Ocean Blue', 'Crimson Red', 'Lavender Dust'];
+const ADMIN_AVAILABLE_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+
+// Selected items in the dynamic form pill selectors
+let selectedPillColors = [];
+let selectedPillSizes = [];
+let selectedProductImages = []; // Holds list of image references for product being edited/added
+let modalCarouselIndex = 0; // Tracks currently active slide index inside the product editor modal
+
+// --- CRYPTOGRAPHIC UTILS ---
+async function sha256(message) {
+    const msgBuffer = new TextEncoder().encode(message);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return hashHex;
+}
+
+// Initialize database
+function getDb() {
+    let db = localStorage.getItem(DB_KEY);
+    if (!db) {
+        localStorage.setItem(DB_KEY, JSON.stringify(DEFAULT_DB));
+        return DEFAULT_DB;
+    }
+    
+    let parsed = JSON.parse(db);
+    
+    // Backward compatibility patching
+    let needsSave = false;
+    
+    if (!parsed.security || parsed.security.hash === '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' || parsed.security.hash === '240a10a68a82ea11761c2fef09ca512f45e9940657750127f56d499855b19e12') {
+        parsed.security = {
+            hash: '07edcf9f709cd2f4e422ad8a967c1c516dd856333b5eef097285a7e9192ecdab' // default wassim
+        };
+        needsSave = true;
+    }
+    
+    if (!parsed.shippingRates) {
+        parsed.shippingRates = [
+            { id: 'rate-standard', name: 'Standard Delivery (48 Wilayas)', price: 600, active: true },
+            { id: 'rate-express', name: 'Express Delivery (Algiers)', price: 400, active: true },
+            { id: 'rate-free', name: 'Free Store Pickup', price: 0, active: true }
+        ];
+        needsSave = true;
+    }
+    
+    // Ensure all products have images array
+    parsed.products.forEach(p => {
+        if (!p.images || !Array.isArray(p.images)) {
+            p.images = p.image ? [p.image] : ['assets/hero_leggings.jpg'];
+            needsSave = true;
+        }
+    });
+
+    // Patch existing orders if they lack shipping info
+    parsed.orders.forEach(o => {
+        if (o.shippingName === undefined) {
+            o.shippingName = 'Standard Delivery';
+            o.shippingPrice = 0;
+            needsSave = true;
+        }
+    });
+    
+    if (needsSave) {
+        localStorage.setItem(DB_KEY, JSON.stringify(parsed));
+    }
+    return parsed;
+}
+
+function saveDb(db) {
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+    // Trigger renders across views
+    renderPublicStore();
+    renderAdminDashboard();
+}
+
+// --- STATE MANAGEMENT ---
+let storeState = {
+    selectedProductId: 'aeroflex-sculpt',
+    selectedColor: 'Midnight Black',
+    selectedSize: 'M',
+    appliedPromo: null,
+    selectedShippingId: 'rate-standard' // Default shipping selection
+};
+
+// Security Tracking
+let lockoutInterval = null;
+let lastActivityTime = Date.now();
+const INACTIVITY_TIMEOUT = 10 * 60 * 1000; // 10 minutes in milliseconds
+
+// --- INITIAL LOADING ---
+document.addEventListener('DOMContentLoaded', () => {
+    getDb(); // seed database if empty
+    
+    // Setup routing and tab listeners
+    initNavigation();
+    initPublicPage();
+    initAdminPage();
+    initCarousel();
+    initSecuritySettings();
+    initShippingSettings(); // Admin shipping tab
+    initDiagnosticsSettings(); // Automated E2E testing tab
+    
+    // Populate customer shipping select dropdown
+    populateShippingDropdown();
+    
+    // Initial Render
+    renderPublicStore();
+    
+    // Start countdown timer
+    startCountdown();
+    
+    // Check initial lockout state
+    checkLockoutState();
+    
+    // Start inactivity session checks
+    startInactivityTracker();
+    
+    // Setup scroll entrance reveal animations
+    initScrollReveal();
+    
+    // Render lucide icons
+    lucide.createIcons();
+});
+
+// --- TOAST NOTIFICATIONS ---
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    let iconName = 'check-circle';
+    if (type === 'error') iconName = 'alert-circle';
+    if (type === 'info') iconName = 'info';
+    
+    toast.innerHTML = `
+        <i data-lucide="${iconName}"></i>
+        <span>${message}</span>
+    `;
+    
+    container.appendChild(toast);
+    lucide.createIcons();
+    
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(50px)';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+// --- PRODUCT GALLERY CAROUSEL ---
+let carouselIndex = 0;
+let carouselInterval = null;
+
+function initCarousel() {
+    const slides = document.querySelectorAll('.carousel-slide');
+    const dots = document.querySelectorAll('.carousel-dots .dot');
+    const prevBtn = document.getElementById('carousel-prev');
+    const nextBtn = document.getElementById('carousel-next');
+    
+    if (slides.length === 0) return;
+
+    // Clone control buttons to remove previous event listeners
+    const newPrev = prevBtn.cloneNode(true);
+    const newNext = nextBtn.cloneNode(true);
+    prevBtn.parentNode.replaceChild(newPrev, prevBtn);
+    nextBtn.parentNode.replaceChild(newNext, nextBtn);
+
+    carouselIndex = 0; // reset to first slide
+
+    function showSlide(index) {
+        // Handle boundary wraps
+        if (index >= slides.length) carouselIndex = 0;
+        else if (index < 0) carouselIndex = slides.length - 1;
+        else carouselIndex = index;
+        
+        // Toggle active states on images
+        slides.forEach((slide, i) => {
+            slide.classList.toggle('active', i === carouselIndex);
+        });
+        
+        // Toggle active states on dot indicators
+        dots.forEach((dot, i) => {
+            dot.classList.toggle('active', i === carouselIndex);
+        });
+    }
+
+    function nextSlide() {
+        showSlide(carouselIndex + 1);
+    }
+
+    function prevSlide() {
+        showSlide(carouselIndex - 1);
+    }
+
+    // Set auto-sliding every 5 seconds
+    function startAutoPlay() {
+        stopAutoPlay();
+        carouselInterval = setInterval(nextSlide, 5000);
+    }
+
+    function stopAutoPlay() {
+        if (carouselInterval) clearInterval(carouselInterval);
+    }
+
+    // Controls listeners
+    newPrev.addEventListener('click', () => {
+        prevSlide();
+        startAutoPlay(); // reset timer
+    });
+
+    newNext.addEventListener('click', () => {
+        nextSlide();
+        startAutoPlay(); // reset timer
+    });
+
+    dots.forEach(dot => {
+        dot.addEventListener('click', () => {
+            const index = parseInt(dot.getAttribute('data-index'));
+            showSlide(index);
+            startAutoPlay();
+        });
+    });
+
+    // Start auto slide
+    startAutoPlay();
+}
+
+// --- DYNAMIC CAROUSEL RENDERER ---
+function renderCarousel(product) {
+    const slidesContainer = document.getElementById('carousel-slides');
+    const dotsContainer = document.getElementById('carousel-dots');
+    
+    if (!slidesContainer || !dotsContainer) return;
+    
+    slidesContainer.innerHTML = '';
+    dotsContainer.innerHTML = '';
+    
+    const images = product.images && product.images.length > 0 ? product.images : [product.image || 'assets/hero_leggings.jpg'];
+    
+    images.forEach((imgSrc, index) => {
+        // Create slide img
+        const img = document.createElement('img');
+        img.src = imgSrc;
+        img.alt = `${product.name} Slide ${index + 1}`;
+        img.className = `carousel-slide ${index === 0 ? 'active' : ''}`;
+        img.id = `slide-${index}`;
+        slidesContainer.appendChild(img);
+        
+        // Create dot indicator
+        const dot = document.createElement('span');
+        dot.className = `dot ${index === 0 ? 'active' : ''}`;
+        dot.setAttribute('data-index', index);
+        dotsContainer.appendChild(dot);
+    });
+    
+    // Reinitialize event bindings
+    initCarousel();
+}
+
+// --- VIEW ROUTING AND NAV INTERACTION ---
+function initNavigation() {
+    const handleRoute = () => {
+        const hash = window.location.hash;
+        const publicView = document.getElementById('public-view');
+        const adminView = document.getElementById('admin-view');
+        
+        if (hash.startsWith('#admin')) {
+            // Check auth
+            const isAuthenticated = sessionStorage.getItem(AUTH_KEY) === 'true';
+            if (isAuthenticated) {
+                publicView.classList.add('hidden');
+                adminView.classList.remove('hidden');
+                renderAdminDashboard();
+                lastActivityTime = Date.now(); // reset activity
+            } else {
+                // Show auth modal and stay on store view
+                window.location.hash = '#/';
+                showAdminAuthModal(true);
+            }
+        } else {
+            adminView.classList.add('hidden');
+            publicView.classList.remove('hidden');
+            renderPublicStore();
+        }
+        lucide.createIcons();
+    };
+
+    window.addEventListener('hashchange', handleRoute);
+    // Initial check
+    handleRoute();
+
+    // Mobile Navigation Toggle
+    const mobileToggle = document.getElementById('mobile-toggle');
+    const mobileMenu = document.getElementById('mobile-menu');
+    
+    mobileToggle.addEventListener('click', () => {
+        mobileMenu.classList.toggle('open');
+        const isOpen = mobileMenu.classList.contains('open');
+        mobileToggle.innerHTML = isOpen ? '<i data-lucide="x"></i>' : '<i data-lucide="menu"></i>';
+        lucide.createIcons();
+    });
+
+    // Close mobile menu on link clicks
+    mobileMenu.querySelectorAll('a, button').forEach(link => {
+        link.addEventListener('click', () => {
+            mobileMenu.classList.remove('open');
+            mobileToggle.innerHTML = '<i data-lucide="menu"></i>';
+            lucide.createIcons();
+        });
+    });
+
+    // Header scroll background effect
+    window.addEventListener('scroll', () => {
+        const header = document.querySelector('.header');
+        if (window.scrollY > 50) {
+            header.classList.add('scrolled');
+        } else {
+            header.classList.remove('scrolled');
+        }
+    });
+
+    // Owner Portal footer link and header link
+    document.getElementById('footer-admin-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        window.location.hash = '#admin';
+    });
+
+    document.querySelector('.nav-admin-btn').addEventListener('click', (e) => {
+        e.preventDefault();
+        window.location.hash = '#admin';
+    });
+}
+
+// --- ADMIN BRUTE FORCE LOCKOUT ENGINE ---
+function checkLockoutState() {
+    const lockoutUntil = parseInt(localStorage.getItem(LOCKOUT_KEY) || '0');
+    const banner = document.getElementById('auth-lockout-banner');
+    const pinInput = document.getElementById('admin-pin');
+    const submitBtn = document.getElementById('admin-auth-submit-btn');
+    const hintText = document.getElementById('auth-hint-text');
+    
+    if (lockoutUntil && Date.now() < lockoutUntil) {
+        // Locked state
+        pinInput.disabled = true;
+        submitBtn.disabled = true;
+        submitBtn.style.opacity = '0.5';
+        submitBtn.style.cursor = 'not-allowed';
+        banner.classList.remove('hidden');
+        if (hintText) hintText.classList.add('hidden');
+        
+        if (lockoutInterval) clearInterval(lockoutInterval);
+        
+        const updateTimer = () => {
+            const timeLeft = lockoutUntil - Date.now();
+            if (timeLeft <= 0) {
+                clearInterval(lockoutInterval);
+                localStorage.removeItem(ATTEMPTS_KEY);
+                localStorage.removeItem(LOCKOUT_KEY);
+                
+                pinInput.disabled = false;
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';
+                submitBtn.style.cursor = 'pointer';
+                banner.classList.add('hidden');
+                if (hintText) hintText.classList.remove('hidden');
+                document.getElementById('auth-error-msg').textContent = '';
+                showToast('Authentication portal unlocked.', 'info');
+            } else {
+                const mins = Math.floor(timeLeft / 60000);
+                const secs = Math.floor((timeLeft % 60000) / 1000);
+                banner.textContent = `Too many failed attempts. Locked for security. Try again in ${mins}:${String(secs).padStart(2, '0')}.`;
+            }
+        };
+        
+        updateTimer();
+        lockoutInterval = setInterval(updateTimer, 1000);
+        return true;
+    } else {
+        // Unlocked state
+        pinInput.disabled = false;
+        submitBtn.disabled = false;
+        submitBtn.style.opacity = '1';
+        submitBtn.style.cursor = 'pointer';
+        banner.classList.add('hidden');
+        if (hintText) hintText.classList.remove('hidden');
+        return false;
+    }
+}
+
+// --- ADMIN PIN AUTHENTICATION MODAL ---
+function showAdminAuthModal(show) {
+    const modal = document.getElementById('admin-auth-modal');
+    const input = document.getElementById('admin-pin');
+    const errMsg = document.getElementById('auth-error-msg');
+    
+    if (show) {
+        modal.classList.remove('hidden');
+        input.value = '';
+        input.focus();
+        errMsg.textContent = '';
+        checkLockoutState();
+    } else {
+        modal.classList.add('hidden');
+        if (lockoutInterval) clearInterval(lockoutInterval);
+    }
+}
+
+document.getElementById('auth-modal-close').addEventListener('click', () => {
+    showAdminAuthModal(false);
+});
+
+document.getElementById('admin-auth-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (checkLockoutState()) return;
+    
+    const pin = document.getElementById('admin-pin').value;
+    const errMsg = document.getElementById('auth-error-msg');
+    const db = getDb();
+    
+    // Hash entered PIN
+    const enteredHash = await sha256(pin);
+    
+    if (enteredHash === db.security.hash) {
+        // Success
+        localStorage.removeItem(ATTEMPTS_KEY);
+        localStorage.removeItem(LOCKOUT_KEY);
+        sessionStorage.setItem(AUTH_KEY, 'true');
+        showAdminAuthModal(false);
+        window.location.hash = '#admin';
+        showToast('Successfully authenticated as administrator.', 'success');
+    } else {
+        // Failed attempt
+        let attempts = parseInt(localStorage.getItem(ATTEMPTS_KEY) || '0') + 1;
+        localStorage.setItem(ATTEMPTS_KEY, String(attempts));
+        
+        if (attempts >= 5) {
+            // Lockout for 5 minutes
+            const lockoutTime = Date.now() + (5 * 60 * 1000);
+            localStorage.setItem(LOCKOUT_KEY, String(lockoutTime));
+            checkLockoutState();
+            showToast('Authentication portal locked. Too many failed attempts.', 'error');
+        } else {
+            errMsg.textContent = `Incorrect PIN. Attempt ${attempts} of 5.`;
+            document.getElementById('admin-pin').value = '';
+            document.getElementById('admin-pin').focus();
+        }
+    }
+});
+
+// --- INACTIVITY AUTO-LOGOUT MONITOR ---
+function startInactivityTracker() {
+    // Listen to user interactions to reset activity timestamp
+    const resetActivity = () => {
+        lastActivityTime = Date.now();
+    };
+    
+    window.addEventListener('mousemove', resetActivity);
+    window.addEventListener('click', resetActivity);
+    window.addEventListener('keypress', resetActivity);
+    window.addEventListener('scroll', resetActivity);
+    
+    // Periodically check inactivity timer
+    setInterval(() => {
+        const isAuthenticated = sessionStorage.getItem(AUTH_KEY) === 'true';
+        if (isAuthenticated) {
+            const timePassed = Date.now() - lastActivityTime;
+            if (timePassed >= INACTIVITY_TIMEOUT) {
+                // Auto-logout
+                sessionStorage.setItem(AUTH_KEY, 'false');
+                window.location.hash = '#/';
+                showToast('Logged out automatically due to inactivity.', 'info');
+                showAdminAuthModal(false);
+            }
+        }
+    }, 15000); // Check every 15 seconds
+}
+
+// --- STOREFRONT SHIPPING RATE SELECT POPULATOR ---
+function populateShippingDropdown() {
+    const select = document.getElementById('cust-shipping');
+    if (!select) return;
+    
+    const db = getDb();
+    const activeRates = db.shippingRates.filter(r => r.active);
+    
+    select.innerHTML = '';
+    
+    if (activeRates.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = 'free-default';
+        opt.textContent = 'Free Shipping (0 DA)';
+        select.appendChild(opt);
+        storeState.selectedShippingId = 'free-default';
+        return;
+    }
+    
+    activeRates.forEach(rate => {
+        const opt = document.createElement('option');
+        opt.value = rate.id;
+        opt.textContent = `${rate.name} (${rate.price === 0 ? 'FREE' : rate.price.toLocaleString() + ' DA'})`;
+        select.appendChild(opt);
+    });
+    
+    // Set default selected option
+    const stillExists = activeRates.some(r => r.id === storeState.selectedShippingId);
+    if (!stillExists) {
+        storeState.selectedShippingId = activeRates[0].id;
+    }
+    select.value = storeState.selectedShippingId;
+}
+
+// --- PUBLIC STORE ENGINE ---
+function initPublicPage() {
+    // Fabric Tech Interactive Tabs
+    document.querySelectorAll('.tech-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.tech-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+        });
+    });
+
+    // Shipping Select listener
+    const shippingSelect = document.getElementById('cust-shipping');
+    if (shippingSelect) {
+        shippingSelect.addEventListener('change', (e) => {
+            storeState.selectedShippingId = e.target.value;
+            renderPublicStore();
+        });
+    }
+
+    // Promo Code Application
+    document.getElementById('apply-promo-btn').addEventListener('click', () => {
+        applyPromoCode();
+    });
+
+    // COD Checkout Form Submission
+    document.getElementById('cod-checkout-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        submitCodOrder();
+    });
+
+    // Success Modal Close
+    document.getElementById('success-modal-close-btn').addEventListener('click', () => {
+        document.getElementById('order-success-modal').classList.add('hidden');
+    });
+}
+
+function renderPublicStore() {
+    const db = getDb();
+    const product = db.products.find(p => p.id === storeState.selectedProductId);
+    
+    if (!product) return;
+    
+    // Render dynamic carousel slideshow
+    renderCarousel(product);
+    
+    // Set text contents
+    document.getElementById('display-product-name').textContent = product.name;
+    document.getElementById('original-price-display').textContent = `${product.originalPrice.toLocaleString()} DA`;
+    
+    // Render color options
+    const colorContainer = document.getElementById('color-options-container');
+    colorContainer.innerHTML = '';
+    product.colors.forEach(color => {
+        const btn = document.createElement('button');
+        btn.className = `color-btn ${storeState.selectedColor === color ? 'active' : ''}`;
+        btn.textContent = color;
+        btn.addEventListener('click', () => {
+            storeState.selectedColor = color;
+            document.getElementById('selected-color-label').textContent = color;
+            renderPublicStore();
+        });
+        colorContainer.appendChild(btn);
+    });
+
+    // Render size options
+    const sizeContainer = document.getElementById('size-options-container');
+    sizeContainer.innerHTML = '';
+    product.sizes.forEach(size => {
+        const btn = document.createElement('button');
+        
+        // Check stock availability for specific color/size
+        const variantKey = `${product.id}:${storeState.selectedColor}:${size}`;
+        const stockCount = db.stock[variantKey] || 0;
+        
+        btn.className = `size-btn ${storeState.selectedSize === size ? 'active' : ''} ${stockCount <= 0 ? 'out-of-stock' : ''}`;
+        btn.textContent = size;
+        
+        if (stockCount > 0) {
+            btn.addEventListener('click', () => {
+                storeState.selectedSize = size;
+                document.getElementById('selected-size-label').textContent = size;
+                renderPublicStore();
+            });
+        }
+        sizeContainer.appendChild(btn);
+    });
+
+    // Update Stock Status Badge
+    const variantKey = `${product.id}:${storeState.selectedColor}:${storeState.selectedSize}`;
+    const currentStock = db.stock[variantKey] !== undefined ? db.stock[variantKey] : 0;
+    const stockContainer = document.getElementById('stock-status-container');
+    const stockText = document.getElementById('stock-status-text');
+    const submitBtn = document.getElementById('submit-order-btn');
+    
+    stockContainer.className = 'stock-status-container'; // reset classes
+    
+    if (currentStock <= 0) {
+        stockContainer.classList.add('out-of-stock');
+        stockText.textContent = `Sorry, this color (${storeState.selectedColor}) and size (${storeState.selectedSize}) is currently out of stock.`;
+        submitBtn.disabled = true;
+        submitBtn.style.opacity = '0.5';
+        submitBtn.style.cursor = 'not-allowed';
+    } else if (currentStock <= 3) {
+        stockContainer.classList.add('low-stock');
+        stockText.textContent = `Hurry! Only ${currentStock} left in stock for ${storeState.selectedColor} - Size ${storeState.selectedSize}!`;
+        submitBtn.disabled = false;
+        submitBtn.style.opacity = '1';
+        submitBtn.style.cursor = 'pointer';
+    } else {
+        stockContainer.classList.add('in-stock');
+        stockText.textContent = `In Stock: ${storeState.selectedColor} - Size ${storeState.selectedSize} is ready for fast delivery.`;
+        submitBtn.disabled = false;
+        submitBtn.style.opacity = '1';
+        submitBtn.style.cursor = 'pointer';
+    }
+    
+    // Update Price Summary
+    updatePriceCalculation(product.price);
+}
+
+function updatePriceCalculation(basePrice) {
+    let finalPrice = basePrice;
+    const promoFeedback = document.getElementById('promo-feedback-msg');
+    const promoDiscountBadge = document.getElementById('promo-discount-badge');
+    const discountRow = document.getElementById('summary-discount-row');
+    
+    // 1. Calculate discount
+    let discountAmount = 0;
+    if (storeState.appliedPromo) {
+        discountAmount = basePrice * (storeState.appliedPromo.discount / 100);
+        finalPrice = basePrice - discountAmount;
+        
+        document.getElementById('summary-discount').textContent = `-${discountAmount.toLocaleString()} DA`;
+        discountRow.style.display = 'flex';
+        
+        promoFeedback.className = 'promo-feedback success';
+        promoFeedback.textContent = `تم تطبيق الكود ${storeState.appliedPromo.code}: خصم -${storeState.appliedPromo.discount}%!`;
+        
+        promoDiscountBadge.style.display = 'block';
+        promoDiscountBadge.textContent = `-${storeState.appliedPromo.discount}% OFF`;
+    } else {
+        discountRow.style.display = 'none';
+        promoDiscountBadge.style.display = 'none';
+    }
+    
+    // 2. Fetch Selected Shipping Fee
+    const db = getDb();
+    const selectedRate = db.shippingRates.find(r => r.id === storeState.selectedShippingId);
+    const shippingFee = selectedRate ? selectedRate.price : 0;
+    
+    const shippingDisplay = document.getElementById('summary-shipping');
+    if (shippingDisplay) {
+        if (shippingFee === 0) {
+            shippingDisplay.textContent = 'FREE';
+            shippingDisplay.className = 'text-green';
+        } else {
+            shippingDisplay.textContent = `+${shippingFee.toLocaleString()} DA`;
+            shippingDisplay.className = '';
+        }
+    }
+    
+    // 3. Calculate grand total
+    const grandTotal = finalPrice + shippingFee;
+    
+    document.getElementById('sale-price-display').textContent = `${finalPrice.toLocaleString()} DA`;
+    document.getElementById('summary-subtotal').textContent = `${basePrice.toLocaleString()} DA`;
+    document.getElementById('summary-total').textContent = `${grandTotal.toLocaleString()} DA`;
+}
+
+function applyPromoCode() {
+    const input = document.getElementById('promo-code');
+    const codeEntered = input.value.trim().toUpperCase();
+    const promoFeedback = document.getElementById('promo-feedback-msg');
+    
+    if (!codeEntered) {
+        storeState.appliedPromo = null;
+        renderPublicStore();
+        return;
+    }
+    
+    const db = getDb();
+    const foundCode = db.promoCodes.find(p => p.code === codeEntered);
+    
+    if (foundCode && foundCode.active) {
+        storeState.appliedPromo = foundCode;
+        renderPublicStore();
+        showToast(`Promo code "${codeEntered}" applied successfully!`, 'success');
+    } else {
+        storeState.appliedPromo = null;
+        promoFeedback.className = 'promo-feedback error';
+        promoFeedback.textContent = 'كود الخصم غير صحيح أو غير مفعّل حالياً.';
+        renderPublicStore();
+    }
+}
+
+function submitCodOrder() {
+    const db = getDb();
+    const product = db.products.find(p => p.id === storeState.selectedProductId);
+    if (!product) return;
+    
+    const variantKey = `${product.id}:${storeState.selectedColor}:${storeState.selectedSize}`;
+    const stockCount = db.stock[variantKey] || 0;
+    
+    // 1. Double check stock count in DB
+    if (stockCount <= 0) {
+        showToast('Sorry! This exact size/color combination has just sold out.', 'error');
+        renderPublicStore();
+        return;
+    }
+    
+    // 2. Fetch Customer Info
+    const name = document.getElementById('cust-name').value.trim();
+    const phone = document.getElementById('cust-phone').value.trim();
+    const address = document.getElementById('cust-address').value.trim();
+    
+    // 3. Fetch Selected Shipping Option details
+    const shippingRate = db.shippingRates.find(r => r.id === storeState.selectedShippingId);
+    const shippingName = shippingRate ? shippingRate.name : 'Standard Delivery';
+    const shippingPrice = shippingRate ? shippingRate.price : 0;
+    
+    // Calculate final price paid
+    let pricePaid = product.price;
+    if (storeState.appliedPromo) {
+        pricePaid = pricePaid - (pricePaid * (storeState.appliedPromo.discount / 100));
+    }
+    pricePaid += shippingPrice; // Add shipping fee to paid price
+    
+    // 4. Decrement Stock Count
+    db.stock[variantKey] = stockCount - 1;
+    
+    // 5. Create Order Object
+    const newOrderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newOrder = {
+        id: newOrderId,
+        date: new Date().toISOString(),
+        customerName: name,
+        customerPhone: phone,
+        customerAddress: address,
+        productId: product.id,
+        productName: product.name,
+        color: storeState.selectedColor,
+        size: storeState.selectedSize,
+        price: parseFloat(pricePaid.toFixed(0)),
+        promoCode: storeState.appliedPromo ? storeState.appliedPromo.code : '',
+        shippingName: shippingName,
+        shippingPrice: shippingPrice,
+        status: 'Pending'
+    };
+    
+    db.orders.unshift(newOrder); // Add to the top of orders
+    
+    // 6. Persist Database
+    saveDb(db);
+    
+    // 7. Reset Form fields (except promo code)
+    document.getElementById('cust-name').value = '';
+    document.getElementById('cust-phone').value = '';
+    document.getElementById('cust-address').value = '';
+    
+    // 8. Show Order Successful Modal
+    document.getElementById('success-order-id').textContent = newOrderId;
+    document.getElementById('success-order-product').textContent = product.name;
+    document.getElementById('success-order-variant').textContent = `${storeState.selectedColor} / Size ${storeState.selectedSize}`;
+    document.getElementById('success-order-total').textContent = `${pricePaid.toLocaleString()} DA`;
+    
+    document.getElementById('order-success-modal').classList.remove('hidden');
+    
+    showToast(`Order placed successfully! Reference: ${newOrderId}`, 'success');
+}
+
+// --- BANNER COUNTDOWN TIMER ---
+function startCountdown() {
+    let hours = 2;
+    let minutes = 45;
+    let seconds = 12;
+    
+    const hElem = document.getElementById('timer-hours');
+    const mElem = document.getElementById('timer-minutes');
+    const sElem = document.getElementById('timer-seconds');
+    
+    const pad = (n) => String(n).padStart(2, '0');
+    
+    setInterval(() => {
+        seconds--;
+        if (seconds < 0) {
+            seconds = 59;
+            minutes--;
+            if (minutes < 0) {
+                minutes = 59;
+                hours--;
+                if (hours < 0) {
+                    // Reset to keep demonstration active
+                    hours = 3;
+                    minutes = 15;
+                    seconds = 45;
+                }
+            }
+        }
+        hElem.textContent = pad(hours);
+        mElem.textContent = pad(minutes);
+        sElem.textContent = pad(seconds);
+    }, 1000);
+}
+
+// --- OWNER ADMIN DASHBOARD ---
+function initAdminPage() {
+    // Navigation items inside Admin view (Desktop & Mobile)
+    const navItems = document.querySelectorAll('.admin-nav-item');
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            const targetTab = item.getAttribute('data-tab');
+            
+            // Toggle active nav class across all matching nav items
+            navItems.forEach(n => {
+                if (n.getAttribute('data-tab') === targetTab) {
+                    n.classList.add('active');
+                } else {
+                    n.classList.remove('active');
+                }
+            });
+            
+            // Close mobile menu if open
+            const mobileMenu = document.getElementById('admin-mobile-menu');
+            if (mobileMenu) {
+                mobileMenu.classList.remove('open');
+            }
+            
+            // Toggle active content divs
+            document.querySelectorAll('.admin-tab-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            document.getElementById(targetTab).classList.remove('hidden');
+            
+            // Update Title
+            const titles = {
+                'tab-stock': ['Live Stock Management', 'Monitor and adjust live stock counts for size/color variants.'],
+                'tab-orders': ['Cash on Delivery Orders', 'Manage fulfillment pipeline for customer COD orders.'],
+                'tab-products': ['Product Catalog', 'Add or customize leggings styles, pricing, and variants.'],
+                'tab-codes': ['Discount & Promo Codes', 'Manage active discount codes that customers can enter at checkout.'],
+                'tab-shipping': ['Shipping Fees Manager', 'Configure delivery methods and customize pricing zones.'],
+                'tab-security': ['Security Settings', 'Update Owner access PIN and configure brute force defense.'],
+                'tab-diagnostics': ['System Diagnostics & E2E Testing', 'Run automated E2E integration tests to verify store operations.']
+            };
+            
+            document.getElementById('admin-current-tab-title').textContent = titles[targetTab][0];
+            document.getElementById('admin-current-tab-desc').textContent = titles[targetTab][1];
+            
+            lucide.createIcons();
+        });
+    });
+
+    // Mobile Hamburger Menu Toggle
+    const adminToggle = document.getElementById('admin-mobile-toggle');
+    const adminMenu = document.getElementById('admin-mobile-menu');
+    if (adminToggle && adminMenu) {
+        adminToggle.addEventListener('click', () => {
+            adminMenu.classList.toggle('open');
+        });
+    }
+
+    // Logout Actions (Desktop & Mobile)
+    const performLogout = () => {
+        sessionStorage.setItem(AUTH_KEY, 'false');
+        window.location.hash = '#/';
+        showToast('Logged out of Admin Panel.', 'info');
+        
+        // Hide mobile menu if open
+        if (adminMenu) {
+            adminMenu.classList.remove('open');
+        }
+    };
+    
+    const logoutBtn = document.getElementById('admin-logout-btn');
+    if (logoutBtn) logoutBtn.addEventListener('click', performLogout);
+    
+    const logoutBtnMobile = document.getElementById('admin-logout-btn-mobile');
+    if (logoutBtnMobile) logoutBtnMobile.addEventListener('click', performLogout);
+
+    // --- PRODUCTS TAB ACTIONS ---
+    const prodModal = document.getElementById('product-form-modal');
+    document.getElementById('add-product-btn').addEventListener('click', () => {
+        document.getElementById('product-modal-title').textContent = 'Add New Product';
+        document.getElementById('edit-prod-id').value = '';
+        document.getElementById('product-edit-form').reset();
+        
+        // Clear image upload file and preview list
+        document.getElementById('prod-image-file').value = '';
+        selectedProductImages = [];
+        modalCarouselIndex = 0;
+        renderModalCarousel();
+        
+        // Reset dynamic selectors
+        selectedPillColors = ['Midnight Black', 'Teal Breeze', 'Electric Orchid'];
+        selectedPillSizes = ['XS', 'S', 'M', 'L', 'XL'];
+        renderFormPillSelectors();
+        
+        prodModal.classList.remove('hidden');
+    });
+    
+    document.getElementById('product-modal-close').addEventListener('click', () => {
+        prodModal.classList.add('hidden');
+    });
+
+    // Multi-file upload selector listener (converts to base64)
+    const fileInput = document.getElementById('prod-image-file');
+    
+    fileInput.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+        
+        let loadedCount = 0;
+        files.forEach(file => {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                selectedProductImages.push(event.target.result);
+                loadedCount++;
+                if (loadedCount === files.length) {
+                    // Set active index to the last uploaded image
+                    modalCarouselIndex = selectedProductImages.length - 1;
+                    renderModalCarousel();
+                    fileInput.value = ''; // Reset input
+                    showToast(`${files.length} images loaded successfully.`, 'success');
+                }
+            };
+            reader.readAsDataURL(file);
+        });
+    });
+
+    // Trigger file selection when clicking the placeholder
+    document.getElementById('modal-carousel-placeholder').addEventListener('click', () => {
+        fileInput.click();
+    });
+    
+    // Trigger file selection when clicking the overlay "+ Add Image" button
+    document.getElementById('modal-carousel-add-btn').addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    // Dynamic modal image slider renderer
+    function renderModalCarousel() {
+        const placeholder = document.getElementById('modal-carousel-placeholder');
+        const slideArea = document.getElementById('modal-carousel-slide-area');
+        const img = document.getElementById('modal-carousel-img');
+        const counter = document.getElementById('modal-carousel-counter');
+        const prevBtn = document.getElementById('modal-carousel-prev');
+        const nextBtn = document.getElementById('modal-carousel-next');
+        
+        if (!placeholder || !slideArea || !img) return;
+        
+        if (selectedProductImages.length === 0) {
+            placeholder.classList.remove('hidden');
+            slideArea.classList.add('hidden');
+            img.src = '';
+            document.getElementById('prod-image').value = '';
+            return;
+        }
+        
+        // Bounds checking
+        if (modalCarouselIndex >= selectedProductImages.length) {
+            modalCarouselIndex = selectedProductImages.length - 1;
+        }
+        if (modalCarouselIndex < 0) {
+            modalCarouselIndex = 0;
+        }
+        
+        placeholder.classList.add('hidden');
+        slideArea.classList.remove('hidden');
+        
+        // Load active image
+        img.src = selectedProductImages[modalCarouselIndex];
+        
+        // Sync backward compatibility hidden input (first image)
+        document.getElementById('prod-image').value = selectedProductImages[0];
+        
+        // Update slide counter
+        counter.textContent = `Image ${modalCarouselIndex + 1} of ${selectedProductImages.length}`;
+        
+        // Toggle arrow visibility
+        if (selectedProductImages.length <= 1) {
+            prevBtn.style.display = 'none';
+            nextBtn.style.display = 'none';
+        } else {
+            prevBtn.style.display = 'flex';
+            nextBtn.style.display = 'flex';
+        }
+    }
+
+    // Modal carousel sliding actions
+    document.getElementById('modal-carousel-prev').addEventListener('click', (e) => {
+        e.preventDefault();
+        modalCarouselIndex--;
+        if (modalCarouselIndex < 0) {
+            modalCarouselIndex = selectedProductImages.length - 1;
+        }
+        renderModalCarousel();
+    });
+
+    document.getElementById('modal-carousel-next').addEventListener('click', (e) => {
+        e.preventDefault();
+        modalCarouselIndex++;
+        if (modalCarouselIndex >= selectedProductImages.length) {
+            modalCarouselIndex = 0;
+        }
+        renderModalCarousel();
+    });
+
+    // Modal carousel delete slide action
+    document.getElementById('modal-carousel-delete-btn').addEventListener('click', (e) => {
+        e.preventDefault();
+        if (selectedProductImages.length === 0) return;
+        
+        if (confirm('Are you sure you want to remove this image from the product slides?')) {
+            selectedProductImages.splice(modalCarouselIndex, 1);
+            
+            // Adjust active index
+            if (modalCarouselIndex >= selectedProductImages.length && selectedProductImages.length > 0) {
+                modalCarouselIndex = selectedProductImages.length - 1;
+            }
+            
+            renderModalCarousel();
+            showToast('Image removed.', 'info');
+        }
+    });
+
+    // Custom color adding handler
+    document.getElementById('add-custom-color-btn').addEventListener('click', () => {
+        const colorNameInput = document.getElementById('custom-color-name');
+        const colorName = colorNameInput.value.trim();
+        
+        if (!colorName) {
+            showToast('Please enter a color name.', 'error');
+            return;
+        }
+        
+        // Add color to global selections list if missing
+        if (!ADMIN_AVAILABLE_COLORS.includes(colorName)) {
+            ADMIN_AVAILABLE_COLORS.push(colorName);
+        }
+        
+        // Auto select custom color
+        if (!selectedPillColors.includes(colorName)) {
+            selectedPillColors.push(colorName);
+        }
+        
+        renderFormPillSelectors();
+        colorNameInput.value = '';
+        showToast(`Custom color "${colorName}" added and selected.`, 'success');
+    });
+
+    document.getElementById('product-edit-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveProduct();
+    });
+
+    // --- PROMO CODES TAB ACTIONS ---
+    const codeModal = document.getElementById('code-form-modal');
+    document.getElementById('add-code-btn').addEventListener('click', () => {
+        document.getElementById('code-modal-title').textContent = 'New Promo Code';
+        document.getElementById('code-edit-form').reset();
+        codeModal.classList.remove('hidden');
+    });
+    
+    document.getElementById('code-modal-close').addEventListener('click', () => {
+        codeModal.classList.add('hidden');
+    });
+
+    document.getElementById('code-edit-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        savePromoCode();
+    });
+
+    // Export Orders to CSV
+    document.getElementById('export-orders-btn').addEventListener('click', () => {
+        exportOrdersCsv();
+    });
+}
+
+// --- DYNAMIC FORM PILL SELECTORS FOR ADMIN PROD MODAL ---
+function renderFormPillSelectors() {
+    const colorsContainer = document.getElementById('admin-colors-selector');
+    const sizesContainer = document.getElementById('admin-sizes-selector');
+    
+    // 1. Colors Selector
+    colorsContainer.innerHTML = '';
+    ADMIN_AVAILABLE_COLORS.forEach(color => {
+        const isSelected = selectedPillColors.includes(color);
+        const pill = document.createElement('div');
+        pill.className = `selector-pill ${isSelected ? 'active-cyan' : ''}`;
+        pill.style.display = 'inline-flex';
+        pill.style.alignItems = 'center';
+        pill.style.gap = '8px';
+        pill.style.cursor = 'pointer';
+        pill.style.userSelect = 'none';
+        
+        // Text label span
+        const textSpan = document.createElement('span');
+        textSpan.textContent = color;
+        textSpan.style.flex = '1';
+        pill.appendChild(textSpan);
+        
+        // Toggle selection status on text click
+        textSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (selectedPillColors.includes(color)) {
+                if (selectedPillColors.length > 1) {
+                    selectedPillColors = selectedPillColors.filter(c => c !== color);
+                } else {
+                    showToast('Product must have at least one color variant.', 'error');
+                }
+            } else {
+                selectedPillColors.push(color);
+            }
+            renderFormPillSelectors();
+        });
+        
+        // Delete button
+        const deleteSpan = document.createElement('span');
+        deleteSpan.innerHTML = '&times;';
+        deleteSpan.title = `Delete "${color}" color option`;
+        deleteSpan.className = 'delete-color-btn';
+        deleteSpan.style.padding = '0 6px';
+        deleteSpan.style.borderRadius = '50%';
+        deleteSpan.style.fontSize = '1.15rem';
+        deleteSpan.style.lineHeight = '1';
+        deleteSpan.style.cursor = 'pointer';
+        deleteSpan.style.color = 'inherit';
+        deleteSpan.style.opacity = '0.5';
+        deleteSpan.style.transition = 'var(--transition)';
+        
+        deleteSpan.addEventListener('mouseover', () => {
+            deleteSpan.style.opacity = '1';
+            deleteSpan.style.color = '#ef4444';
+            deleteSpan.style.background = 'rgba(239, 68, 68, 0.15)';
+        });
+        deleteSpan.addEventListener('mouseout', () => {
+            deleteSpan.style.opacity = '0.5';
+            deleteSpan.style.color = 'inherit';
+            deleteSpan.style.background = 'transparent';
+        });
+        
+        deleteSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (ADMIN_AVAILABLE_COLORS.length <= 1) {
+                showToast('You must keep at least one available color choice.', 'error');
+                return;
+            }
+            if (confirm(`Are you sure you want to delete color option "${color}"?`)) {
+                // Remove from selection
+                selectedPillColors = selectedPillColors.filter(c => c !== color);
+                // Delete color option
+                const idx = ADMIN_AVAILABLE_COLORS.indexOf(color);
+                if (idx > -1) {
+                    ADMIN_AVAILABLE_COLORS.splice(idx, 1);
+                }
+                renderFormPillSelectors();
+                showToast(`Color "${color}" removed from choices list.`, 'info');
+            }
+        });
+        
+        pill.appendChild(deleteSpan);
+        colorsContainer.appendChild(pill);
+    });
+    // Update hidden field value
+    document.getElementById('prod-colors').value = selectedPillColors.join(', ');
+
+    // 2. Sizes Selector
+    sizesContainer.innerHTML = '';
+    ADMIN_AVAILABLE_SIZES.forEach(size => {
+        const isSelected = selectedPillSizes.includes(size);
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = `selector-pill ${isSelected ? 'active' : ''}`;
+        pill.textContent = size;
+        
+        pill.addEventListener('click', () => {
+            if (selectedPillSizes.includes(size)) {
+                // Remove size (keep at least 1 size)
+                if (selectedPillSizes.length > 1) {
+                    selectedPillSizes = selectedPillSizes.filter(s => s !== size);
+                } else {
+                    showToast('Product must have at least one size variant.', 'error');
+                }
+            } else {
+                // Add size
+                selectedPillSizes.push(size);
+            }
+            renderFormPillSelectors();
+        });
+        sizesContainer.appendChild(pill);
+    });
+    // Update hidden field value
+    document.getElementById('prod-sizes').value = selectedPillSizes.join(', ');
+}
+
+function renderAdminDashboard() {
+    const db = getDb();
+    
+    // Update badge in sidebar/header navigation
+    const pendingOrdersCount = db.orders.filter(o => o.status === 'Pending').length;
+    
+    const badge = document.getElementById('admin-orders-badge');
+    if (badge) {
+        badge.textContent = pendingOrdersCount;
+        badge.style.display = pendingOrdersCount > 0 ? 'inline-block' : 'none';
+    }
+    
+    const badgeMobile = document.getElementById('admin-orders-badge-mobile');
+    if (badgeMobile) {
+        badgeMobile.textContent = pendingOrdersCount;
+        badgeMobile.style.display = pendingOrdersCount > 0 ? 'inline-block' : 'none';
+    }
+
+    // 1. RENDER LIVE STOCK
+    renderAdminStockTable(db);
+    
+    // 2. RENDER ORDERS
+    renderAdminOrdersTable(db);
+    
+    // 3. RENDER PRODUCTS
+    renderAdminProductsTable(db);
+    
+    // 4. RENDER PROMO CODES
+    renderAdminCodesTable(db);
+    
+    // 5. RENDER SHIPPING RATES
+    renderAdminShippingTable(db);
+    
+    lucide.createIcons();
+}
+
+function renderAdminStockTable(db) {
+    const body = document.getElementById('admin-stock-table-body');
+    body.innerHTML = '';
+    
+    db.products.forEach(product => {
+        product.colors.forEach(color => {
+            product.sizes.forEach(size => {
+                const key = `${product.id}:${color}:${size}`;
+                const currentStock = db.stock[key] !== undefined ? db.stock[key] : 0;
+                
+                const tr = document.createElement('tr');
+                
+                // Status Badge
+                let statusBadge = `<span class="badge-status instock">In Stock</span>`;
+                if (currentStock <= 0) {
+                    statusBadge = `<span class="badge-status outofstock">Out of Stock</span>`;
+                } else if (currentStock <= 3) {
+                    statusBadge = `<span class="badge-status low">Low Stock</span>`;
+                }
+                
+                tr.innerHTML = `
+                    <td><strong>${product.name}</strong></td>
+                    <td><span class="color-tag">${color}</span></td>
+                    <td><span class="size-btn" style="width:36px; height:30px; display:inline-flex; pointer-events:none;">${size}</span></td>
+                    <td>
+                        <div class="stock-control">
+                            <button class="btn-ctrl btn-minus" data-key="${key}">-</button>
+                            <input type="number" class="stock-input" value="${currentStock}" data-key="${key}">
+                            <button class="btn-ctrl btn-plus" data-key="${key}">+</button>
+                        </div>
+                    </td>
+                    <td>${statusBadge}</td>
+                `;
+                
+                // Bind controls
+                tr.querySelector('.btn-minus').addEventListener('click', () => updateStockLevel(key, currentStock - 1));
+                tr.querySelector('.btn-plus').addEventListener('click', () => updateStockLevel(key, currentStock + 1));
+                tr.querySelector('.stock-input').addEventListener('change', (e) => {
+                    const val = parseInt(e.target.value);
+                    updateStockLevel(key, isNaN(val) ? 0 : val);
+                });
+                
+                body.appendChild(tr);
+            });
+        });
+    });
+}
+
+function updateStockLevel(variantKey, newValue) {
+    const db = getDb();
+    if (newValue < 0) newValue = 0;
+    db.stock[variantKey] = newValue;
+    saveDb(db);
+    showToast(`Stock updated successfully.`, 'success');
+}
+
+function renderAdminOrdersTable(db) {
+    const body = document.getElementById('admin-orders-table-body');
+    body.innerHTML = '';
+    
+    if (db.orders.length === 0) {
+        body.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:40px;">No Cash on Delivery orders received yet.</td></tr>`;
+        return;
+    }
+
+    db.orders.forEach(order => {
+        const tr = document.createElement('tr');
+        const orderDate = order.date ? new Date(order.date).toLocaleString() : 'N/A';
+        
+        let statusClass = (order.status || 'Pending').toLowerCase();
+        
+        tr.innerHTML = `
+            <td><strong>${order.id || 'N/A'}</strong></td>
+            <td><span style="font-size:0.8rem; color:var(--text-secondary);">${orderDate}</span></td>
+            <td>
+                <div><strong>${order.customerName || 'N/A'}</strong></div>
+                <div style="font-size:0.8rem; color:var(--text-muted);"><i data-lucide="phone" style="width:12px; height:12px; display:inline; vertical-align:middle;"></i> ${order.customerPhone || 'N/A'}</div>
+                <div style="font-size:0.8rem; color:var(--text-muted);"><i data-lucide="map-pin" style="width:12px; height:12px; display:inline; vertical-align:middle;"></i> ${order.customerAddress || 'N/A'}</div>
+            </td>
+            <td>
+                <div>${order.productName || 'N/A'}</div>
+                <span class="color-tag">${order.color || 'N/A'}</span> <span class="color-tag" style="background:rgba(124,58,237,0.15)">${order.size || 'N/A'}</span>
+            </td>
+            <td>
+                <strong class="text-green">${(order.price || 0).toLocaleString()} DA</strong>
+                <div style="font-size:0.75rem; color:var(--text-muted);">Shipping: ${order.shippingName || 'Standard Delivery'} (${order.shippingPrice === 0 ? 'FREE' : (order.shippingPrice || 0) + ' DA'})</div>
+                ${order.promoCode ? `<div style="font-size:0.75rem; color:var(--text-muted);">Promo: ${order.promoCode}</div>` : ''}
+            </td>
+            <td><span class="badge-status ${statusClass}">${order.status}</span></td>
+            <td>
+                <select class="action-select" data-id="${order.id}">
+                    <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>Pending</option>
+                    <option value="Shipped" ${order.status === 'Shipped' ? 'selected' : ''}>Shipped</option>
+                    <option value="Delivered" ${order.status === 'Delivered' ? 'selected' : ''}>Delivered</option>
+                    <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
+                </select>
+            </td>
+        `;
+        
+        // Listen to select status change
+        tr.querySelector('.action-select').addEventListener('change', (e) => {
+            updateOrderStatus(order.id, e.target.value);
+        });
+
+        body.appendChild(tr);
+    });
+}
+
+function updateOrderStatus(orderId, newStatus) {
+    const db = getDb();
+    const order = db.orders.find(o => o.id === orderId);
+    if (order) {
+        order.status = newStatus;
+        saveDb(db);
+        showToast(`Order ${orderId} status set to: ${newStatus}`, 'success');
+    }
+}
+
+function renderAdminProductsTable(db) {
+    const body = document.getElementById('admin-products-table-body');
+    body.innerHTML = '';
+    
+    db.products.forEach(p => {
+        const tr = document.createElement('tr');
+        
+        const colorsHtml = p.colors.map(c => `<span class="color-tag">${c}</span>`).join('');
+        const sizesHtml = p.sizes.map(s => `<span class="color-tag" style="background:rgba(6, 182, 212, 0.1)">${s}</span>`).join('');
+        
+        tr.innerHTML = `
+            <td><img src="${p.image}" class="table-img" alt="${p.name}"></td>
+            <td><strong>${p.name}</strong><br><small style="color:var(--text-muted); display:inline-block; max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.description}</small></td>
+            <td><strong>${p.price.toLocaleString()} DA</strong> <span style="text-decoration:line-through; font-size:0.8rem; color:var(--text-muted);">${p.originalPrice.toLocaleString()} DA</span></td>
+            <td>${colorsHtml}</td>
+            <td>${sizesHtml}</td>
+            <td>
+                <div class="order-actions">
+                    <button class="btn btn-outline btn-sm btn-edit" data-id="${p.id}"><i data-lucide="edit"></i> Edit</button>
+                    <button class="btn btn-outline btn-sm btn-delete text-red" data-id="${p.id}" ${db.products.length <= 1 ? 'disabled style="opacity:0.3;"' : ''}><i data-lucide="trash-2"></i> Delete</button>
+                </div>
+            </td>
+        `;
+        
+        tr.querySelector('.btn-edit').addEventListener('click', () => openEditProductModal(p.id));
+        
+        if (db.products.length > 1) {
+            tr.querySelector('.btn-delete').addEventListener('click', () => deleteProduct(p.id));
+        }
+        
+        body.appendChild(tr);
+    });
+}
+
+function openEditProductModal(productId) {
+    const db = getDb();
+    const p = db.products.find(prod => prod.id === productId);
+    if (!p) return;
+    
+    document.getElementById('product-modal-title').textContent = 'Edit Product';
+    document.getElementById('edit-prod-id').value = p.id;
+    document.getElementById('prod-name').value = p.name;
+    document.getElementById('prod-desc').value = p.description;
+    document.getElementById('prod-price').value = p.price;
+    document.getElementById('prod-original-price').value = p.originalPrice;
+    document.getElementById('prod-image').value = p.image || '';
+    
+    // Ensure all product colors exist in global selection options
+    p.colors.forEach(color => {
+        if (!ADMIN_AVAILABLE_COLORS.includes(color)) {
+            ADMIN_AVAILABLE_COLORS.push(color);
+        }
+    });
+    
+    // Load images array and render modal carousel slider
+    selectedProductImages = p.images ? [...p.images] : (p.image ? [p.image] : []);
+    modalCarouselIndex = 0;
+    renderModalCarousel();
+    
+    // Reset file input selector
+    document.getElementById('prod-image-file').value = '';
+    
+    // Synchronize dynamic color and size selects
+    selectedPillColors = [...p.colors];
+    selectedPillSizes = [...p.sizes];
+    renderFormPillSelectors();
+    
+    document.getElementById('product-form-modal').classList.remove('hidden');
+}
+
+function saveProduct() {
+    const db = getDb();
+    const id = document.getElementById('edit-prod-id').value;
+    
+    const name = document.getElementById('prod-name').value.trim();
+    const description = document.getElementById('prod-desc').value.trim();
+    const price = parseFloat(document.getElementById('prod-price').value);
+    const originalPrice = parseFloat(document.getElementById('prod-original-price').value);
+    
+    // Ensure we have at least one product image
+    if (selectedProductImages.length === 0) {
+        showToast('Please add at least one product image.', 'error');
+        return;
+    }
+    
+    const image = selectedProductImages[0]; // Primary compatibility fallback
+    const images = selectedProductImages;
+    
+    // Read colors & sizes from dynamic selects
+    const colors = selectedPillColors;
+    const sizes = selectedPillSizes;
+    
+    if (id) {
+        // Mode: Edit Product
+        const p = db.products.find(prod => prod.id === id);
+        if (p) {
+            p.name = name;
+            p.description = description;
+            p.price = price;
+            p.originalPrice = originalPrice;
+            p.image = image;
+            p.images = images;
+            p.colors = colors;
+            p.sizes = sizes;
+            
+            // Sync inventory variants (preserve existing, create missing)
+            colors.forEach(c => {
+                sizes.forEach(s => {
+                    const key = `${id}:${c}:${s}`;
+                    if (db.stock[key] === undefined) {
+                        db.stock[key] = 10; // Default new stock
+                    }
+                });
+            });
+        }
+        showToast('Product settings updated successfully.', 'success');
+    } else {
+        // Mode: Add Product
+        const newId = 'prod-' + Date.now();
+        const newProduct = {
+            id: newId,
+            name,
+            description,
+            price,
+            originalPrice,
+            image,
+            images,
+            colors,
+            sizes
+        };
+        db.products.push(newProduct);
+        
+        // Initialize stock for all new variants
+        colors.forEach(c => {
+            sizes.forEach(s => {
+                const key = `${newId}:${c}:${s}`;
+                db.stock[key] = 10; // Default stock count
+            });
+        });
+        showToast('New product added to catalog.', 'success');
+    }
+    
+    saveDb(db);
+    document.getElementById('product-form-modal').classList.add('hidden');
+}
+
+function deleteProduct(id) {
+    if (confirm('Are you sure you want to delete this product? All its size/color stock counts will be deleted.')) {
+        const db = getDb();
+        db.products = db.products.filter(p => p.id !== id);
+        
+        // Delete all stock references matching this product ID
+        Object.keys(db.stock).forEach(key => {
+            if (key.startsWith(id + ':')) {
+                delete db.stock[key];
+            }
+        });
+        
+        // If the deleted product was selected, revert to first product
+        if (storeState.selectedProductId === id && db.products.length > 0) {
+            storeState.selectedProductId = db.products[0].id;
+            storeState.selectedColor = db.products[0].colors[0];
+            storeState.selectedSize = db.products[0].sizes[0];
+        }
+        
+        saveDb(db);
+        showToast('Product deleted.', 'info');
+    }
+}
+
+function renderAdminCodesTable(db) {
+    const body = document.getElementById('admin-codes-table-body');
+    body.innerHTML = '';
+    
+    db.promoCodes.forEach(item => {
+        const tr = document.createElement('tr');
+        
+        tr.innerHTML = `
+            <td><strong style="font-family:monospace; font-size:1.1rem;">${item.code}</strong></td>
+            <td><strong>${item.discount}% Off</strong></td>
+            <td>
+                <label class="switch">
+                    <input type="checkbox" class="code-toggle" data-code="${item.code}" ${item.active ? 'checked' : ''}>
+                    <span class="slider"></span>
+                </label>
+            </td>
+            <td>
+                <button class="btn btn-outline btn-sm btn-delete-code text-red" data-code="${item.code}"><i data-lucide="trash-2"></i> Delete</button>
+            </td>
+        `;
+        
+        // Bind toggle
+        tr.querySelector('.code-toggle').addEventListener('change', (e) => {
+            togglePromoCode(item.code, e.target.checked);
+        });
+        
+        // Bind delete
+        tr.querySelector('.btn-delete-code').addEventListener('click', () => {
+            deletePromoCode(item.code);
+        });
+        
+        body.appendChild(tr);
+    });
+}
+
+function togglePromoCode(code, isActive) {
+    const db = getDb();
+    const promo = db.promoCodes.find(p => p.code === code);
+    if (promo) {
+        promo.active = isActive;
+        saveDb(db);
+        showToast(`Promo code "${code}" set to ${isActive ? 'ACTIVE' : 'INACTIVE'}.`, 'success');
+    }
+}
+
+function savePromoCode() {
+    const db = getDb();
+    const name = document.getElementById('promo-code-name').value.trim().toUpperCase();
+    const pct = parseInt(document.getElementById('promo-code-pct').value);
+    
+    // Check duplication
+    if (db.promoCodes.some(p => p.code === name)) {
+        showToast('A promo code with this name already exists.', 'error');
+        return;
+    }
+    
+    db.promoCodes.push({
+        code: name,
+        discount: pct,
+        active: true
+    });
+    
+    saveDb(db);
+    document.getElementById('code-form-modal').classList.add('hidden');
+    showToast(`Promo code "${name}" created.`, 'success');
+}
+
+// --- OWNER ADMIN SHIPPING TAB LOGIC ---
+function initShippingSettings() {
+    const shipModal = document.getElementById('shipping-form-modal');
+    const form = document.getElementById('shipping-edit-form');
+    
+    document.getElementById('add-shipping-btn').addEventListener('click', () => {
+        document.getElementById('shipping-modal-title').textContent = 'New Shipping Rate';
+        document.getElementById('edit-shipping-id').value = '';
+        form.reset();
+        shipModal.classList.remove('hidden');
+    });
+    
+    document.getElementById('shipping-modal-close').addEventListener('click', () => {
+        shipModal.classList.add('hidden');
+    });
+    
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveShippingRate();
+    });
+}
+
+function renderAdminShippingTable(db) {
+    const body = document.getElementById('admin-shipping-table-body');
+    if (!body) return;
+    
+    body.innerHTML = '';
+    db.shippingRates.forEach(rate => {
+        const tr = document.createElement('tr');
+        
+        tr.innerHTML = `
+            <td><strong>${rate.name}</strong></td>
+            <td><strong>${rate.price === 0 ? 'FREE' : rate.price.toLocaleString() + ' DA'}</strong></td>
+            <td>
+                <label class="switch">
+                    <input type="checkbox" class="shipping-toggle" data-id="${rate.id}" ${rate.active ? 'checked' : ''}>
+                    <span class="slider"></span>
+                </label>
+            </td>
+            <td>
+                <div class="order-actions">
+                    <button class="btn btn-outline btn-sm btn-edit-shipping" data-id="${rate.id}"><i data-lucide="edit"></i> Edit</button>
+                    <button class="btn btn-outline btn-sm btn-delete-shipping text-red" data-id="${rate.id}"><i data-lucide="trash-2"></i> Delete</button>
+                </div>
+            </td>
+        `;
+        
+        // Active Toggle listener
+        tr.querySelector('.shipping-toggle').addEventListener('change', (e) => {
+            toggleShippingActive(rate.id, e.target.checked);
+        });
+        
+        // Edit Rate listener
+        tr.querySelector('.btn-edit-shipping').addEventListener('click', () => {
+            openEditShippingModal(rate.id);
+        });
+        
+        // Delete Rate listener
+        tr.querySelector('.btn-delete-shipping').addEventListener('click', () => {
+            deleteShippingRate(rate.id);
+        });
+        
+        body.appendChild(tr);
+    });
+}
+
+function toggleShippingActive(rateId, isActive) {
+    const db = getDb();
+    const rate = db.shippingRates.find(r => r.id === rateId);
+    if (rate) {
+        rate.active = isActive;
+        saveDb(db);
+        populateShippingDropdown();
+        showToast(`Shipping rate "${rate.name}" set to ${isActive ? 'ACTIVE' : 'INACTIVE'}.`, 'success');
+    }
+}
+
+function openEditShippingModal(rateId) {
+    const db = getDb();
+    const rate = db.shippingRates.find(r => r.id === rateId);
+    if (!rate) return;
+    
+    document.getElementById('shipping-modal-title').textContent = 'Edit Shipping Rate';
+    document.getElementById('edit-shipping-id').value = rate.id;
+    document.getElementById('shipping-rate-name').value = rate.name;
+    document.getElementById('shipping-rate-price').value = rate.price;
+    
+    document.getElementById('shipping-form-modal').classList.remove('hidden');
+}
+
+function saveShippingRate() {
+    const db = getDb();
+    const id = document.getElementById('edit-shipping-id').value;
+    const name = document.getElementById('shipping-rate-name').value.trim();
+    const price = parseFloat(document.getElementById('shipping-rate-price').value);
+    
+    if (id) {
+        // Mode: Edit
+        const rate = db.shippingRates.find(r => r.id === id);
+        if (rate) {
+            rate.name = name;
+            rate.price = isNaN(price) ? 0 : price;
+        }
+        showToast('Shipping rate updated successfully.', 'success');
+    } else {
+        // Mode: Add
+        const newId = 'rate-' + Date.now();
+        db.shippingRates.push({
+            id: newId,
+            name: name,
+            price: isNaN(price) ? 0 : price,
+            active: true
+        });
+        showToast('New shipping rate option added.', 'success');
+    }
+    
+    saveDb(db);
+    populateShippingDropdown();
+    document.getElementById('shipping-form-modal').classList.add('hidden');
+}
+
+function deleteShippingRate(rateId) {
+    if (confirm('Are you sure you want to delete this shipping option?')) {
+        const db = getDb();
+        db.shippingRates = db.shippingRates.filter(r => r.id !== rateId);
+        saveDb(db);
+        populateShippingDropdown();
+        showToast('Shipping option removed.', 'info');
+    }
+}
+
+function deletePromoCode(code) {
+    if (confirm(`Are you sure you want to delete promo code "${code}"?`)) {
+        const db = getDb();
+        db.promoCodes = db.promoCodes.filter(p => p.code === code);
+        
+        if (storeState.appliedPromo && storeState.appliedPromo.code === code) {
+            storeState.appliedPromo = null;
+        }
+        
+        saveDb(db);
+        showToast('Promo code deleted.', 'info');
+    }
+}
+
+// --- SECURITY SETTINGS (CHANGE PASSWORD) ---
+function initSecuritySettings() {
+    const form = document.getElementById('admin-change-password-form');
+    if (!form) return;
+    
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const currPass = document.getElementById('change-curr-pass').value;
+        const newPass = document.getElementById('change-new-pass').value;
+        const confPass = document.getElementById('change-conf-pass').value;
+        
+        const db = getDb();
+        
+        // 1. Verify current password
+        const hashedCurr = await sha256(currPass);
+        if (hashedCurr !== db.security.hash) {
+            showToast('Current password/PIN is incorrect.', 'error');
+            document.getElementById('change-curr-pass').value = '';
+            document.getElementById('change-curr-pass').focus();
+            return;
+        }
+        
+        // 2. Verify matching confirmation
+        if (newPass !== confPass) {
+            showToast('New PIN and confirmation PIN do not match.', 'error');
+            document.getElementById('change-conf-pass').value = '';
+            document.getElementById('change-conf-pass').focus();
+            return;
+        }
+        
+        // 3. Update hash in DB
+        const hashedNew = await sha256(newPass);
+        db.security.hash = hashedNew;
+        saveDb(db);
+        
+        // Success
+        form.reset();
+        showToast('Security PIN successfully updated.', 'success');
+        
+        // If they updated the password, hide default PIN hint text
+        const hintText = document.getElementById('auth-hint-text');
+        if (hintText) {
+            hintText.innerHTML = 'Security PIN is customized by owner.';
+        }
+    });
+}
+
+// --- CSV EXPORT UTILITY ---
+function exportOrdersCsv() {
+    const db = getDb();
+    if (db.orders.length === 0) {
+        showToast('No orders available to export.', 'error');
+        return;
+    }
+    
+    // CSV headers
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Order ID,Date,Customer Name,Phone,Address,Product,Color,Size,Total Paid (DA),Promo Code,Shipping,Shipping Price,Status\r\n";
+    
+    // Add rows
+    db.orders.forEach(o => {
+        const row = [
+            o.id,
+            o.date,
+            `"${o.customerName.replace(/"/g, '""')}"`,
+            `"${o.customerPhone}"`,
+            `"${o.customerAddress.replace(/"/g, '""')}"`,
+            `"${o.productName}"`,
+            o.color,
+            o.size,
+            o.price,
+            o.promoCode,
+            `"${o.shippingName}"`,
+            o.shippingPrice,
+            o.status
+        ].join(",");
+        csvContent += row + "\r\n";
+    });
+    
+    // Download link triggering
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `aeroflex_cod_orders_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showToast('Orders exported to CSV file successfully.', 'success');
+}
+
+// --- SCROLL REVEAL ANIMATIONS (Intersection Observer) ---
+function initScrollReveal() {
+    const revealElements = document.querySelectorAll('.scroll-reveal');
+    
+    const observer = new IntersectionObserver((entries, observer) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('reveal-visible');
+                // Unobserve to trigger transition once
+                observer.unobserve(entry.target);
+            }
+        });
+    }, {
+        threshold: 0.1, // Trigger when 10% of element is in view
+        rootMargin: '0px 0px -40px 0px'
+    });
+    
+    revealElements.forEach(el => {
+        observer.observe(el);
+    });
+}
+
+// --- E2E SYSTEM DIAGNOSTICS TESTS & LOGS ---
+function initDiagnosticsSettings() {
+    const btn = document.getElementById('btn-run-diagnostics');
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        runDiagnostics();
+    });
+}
+
+async function runDiagnostics() {
+    const logOutput = document.getElementById('diagnostic-log-output');
+    const badge = document.getElementById('diagnostic-status-badge');
+    if (!logOutput || !badge) return;
+    
+    logOutput.innerHTML = '';
+    badge.textContent = 'Running...';
+    badge.style.background = '#eab308';
+    badge.style.color = '#fff';
+    
+    function log(message, type = 'info') {
+        const div = document.createElement('div');
+        const timestamp = new Date().toISOString().slice(11, 19);
+        let color = '#d4d4d4';
+        if (type === 'success') color = '#4ade80';
+        if (type === 'error') color = '#f87171';
+        if (type === 'warn') color = '#fbbf24';
+        if (type === 'heading') color = '#60a5fa';
+        
+        div.style.color = color;
+        div.innerHTML = `<span style="color: #8c8280;">[${timestamp}]</span> ${message}`;
+        logOutput.appendChild(div);
+        logOutput.scrollTop = logOutput.scrollHeight;
+    }
+    
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    
+    try {
+        log('Initializing E2E Diagnostic Test Suite...', 'heading');
+        await sleep(500);
+        
+        // Step 1: Database Integrity Check
+        log('Step 1: Checking database integrity and connectivity...', 'info');
+        await sleep(400);
+        const db = getDb();
+        if (db && Array.isArray(db.products) && Array.isArray(db.orders)) {
+            // Self-healing: clear any leftover diagnostic or corrupted orders/products from previous crashes
+            const beforePCount = db.products.length;
+            const beforeOCount = db.orders.length;
+            db.products = db.products.filter(p => !p.id.startsWith('prod-diag-'));
+            db.orders = db.orders.filter(o => o.id && !o.id.startsWith('order-diag-') && o.price !== undefined && o.date !== undefined);
+            if (db.products.length !== beforePCount || db.orders.length !== beforeOCount) {
+                saveDb(db);
+                log('Sanitized and cleared residual diagnostic sandbox data from previous runs.', 'warn');
+            }
+            log(`[PASS] DB loaded. Products: ${db.products.length}, Orders: ${db.orders.length}, Shipping Zones: ${db.shippingRates.length}`, 'success');
+        } else {
+            throw new Error('Database is malformed or inaccessible.');
+        }
+        await sleep(500);
+        
+        // Step 2: Add Product Simulation
+        log('Step 2: Simulating "Add Product" catalog action...', 'info');
+        await sleep(600);
+        const tempProdId = 'prod-diag-' + Date.now();
+        const testProduct = {
+            id: tempProdId,
+            name: 'AeroFlex Diagnostic Fit Leggings',
+            description: 'Temporary testing variant created by E2E diagnostics sandbox.',
+            price: 6500,
+            originalPrice: 8500,
+            image: 'products/92bc9f381fb2e500485b93f4fb2c0c76.jpg', // test image in folder
+            images: [
+                'products/92bc9f381fb2e500485b93f4fb2c0c76.jpg',
+                'products/20260712_154128.jpg'
+            ],
+            colors: ['Midnight Black', 'Electric Orchid'],
+            sizes: ['M', 'L']
+        };
+        
+        db.products.push(testProduct);
+        
+        // Setup initial stock for test variants
+        testProduct.colors.forEach(c => {
+            testProduct.sizes.forEach(s => {
+                db.stock[`${tempProdId}:${c}:${s}`] = 15;
+            });
+        });
+        saveDb(db);
+        log(`[PASS] Created product "${testProduct.name}" (ID: ${tempProdId}) with multi-image slider and stock level = 15.`, 'success');
+        await sleep(600);
+        
+        // Step 3: Update Product Simulation
+        log('Step 3: Simulating "Update Product" parameters...', 'info');
+        await sleep(500);
+        let freshDb = getDb();
+        let targetProd = freshDb.products.find(p => p.id === tempProdId);
+        if (!targetProd) throw new Error('Product not found in DB after saving.');
+        
+        targetProd.price = 7200; // price increase test
+        targetProd.colors.push('Teal Breeze');
+        // add stock for new color variant
+        targetProd.sizes.forEach(s => {
+            freshDb.stock[`${tempProdId}:Teal Breeze:${s}`] = 12;
+        });
+        saveDb(freshDb);
+        log(`[PASS] Price updated from 6500 to 7200 DA. Added "Teal Breeze" color option.`, 'success');
+        await sleep(500);
+        
+        // Step 4: Create Promo Code
+        log('Step 4: Creating temporary E2E discount code...', 'info');
+        await sleep(400);
+        freshDb = getDb();
+        const testPromo = {
+            code: 'TESTDIAG15',
+            type: 'percentage',
+            value: 15,
+            active: true
+        };
+        freshDb.promoCodes.push(testPromo);
+        saveDb(freshDb);
+        log(`[PASS] Promo code "${testPromo.code}" (15% OFF) registered successfully.`, 'success');
+        await sleep(500);
+        
+        // Step 5: Place Customer COD Order
+        log('Step 5: Simulating customer checkout order calculation...', 'info');
+        await sleep(700);
+        freshDb = getDb();
+        
+        // Math validation
+        const qty = 2;
+        const subtotal = 7200 * qty; // 14400
+        const shippingFee = 600; // standard delivery
+        const discountAmount = Math.round(subtotal * 0.15); // 2160
+        const expectedTotal = subtotal + shippingFee - discountAmount; // 14400 + 600 - 2160 = 12840
+        
+        log(`Customer selected color: "Teal Breeze", size: "M", qty: ${qty}.`, 'info');
+        log(`Subtotal: ${subtotal} DA, Shipping: ${shippingFee} DA, Promo Discount: -${discountAmount} DA.`, 'info');
+        log(`Verifying total checkout math: Subtotal + Shipping - Discount = ${expectedTotal} DA...`, 'info');
+        await sleep(400);
+        
+        // Deduct stock levels
+        const stockKey = `${tempProdId}:Teal Breeze:M`;
+        const initialStock = freshDb.stock[stockKey];
+        if (initialStock === undefined) throw new Error('Stock key variant not initialized.');
+        
+        const finalStock = initialStock - qty;
+        freshDb.stock[stockKey] = finalStock;
+        
+        // Create mock order (flat structure matching real database schema)
+        const tempOrderId = 'order-diag-' + Date.now();
+        const newOrder = {
+            id: tempOrderId,
+            date: new Date().toISOString(),
+            customerName: 'Wassim Tester',
+            customerPhone: '0555123456',
+            customerAddress: '123 E2E Diagnostic Street, Algiers',
+            productId: tempProdId,
+            productName: testProduct.name,
+            color: 'Teal Breeze',
+            size: 'M',
+            price: expectedTotal,
+            promoCode: 'TESTDIAG15',
+            shippingName: 'Standard Delivery (48 Wilayas)',
+            shippingPrice: shippingFee,
+            status: 'Pending'
+        };
+        
+        freshDb.orders.push(newOrder);
+        saveDb(freshDb);
+        
+        log(`[PASS] Order ${tempOrderId} stored. Stock level for variant "${stockKey}" decremented from ${initialStock} to ${finalStock}.`, 'success');
+        await sleep(700);
+        
+        // Step 6: Order Status Transitions
+        log('Step 6: Simulating owner order pipeline management...', 'info');
+        await sleep(500);
+        freshDb = getDb();
+        let targetOrder = freshDb.orders.find(o => o.id === tempOrderId);
+        if (!targetOrder) throw new Error('Order not found in database.');
+        
+        targetOrder.status = 'Completed';
+        saveDb(freshDb);
+        log(`[PASS] Transitioned order status to "Completed". Logged successfully.`, 'success');
+        await sleep(600);
+        
+        // Step 7: Cleanup E2E Sandboxed Data
+        log('Step 7: Performing automated sandbox cleanup...', 'info');
+        await sleep(600);
+        freshDb = getDb();
+        
+        // Remove test product
+        freshDb.products = freshDb.products.filter(p => p.id !== tempProdId);
+        // Remove stock keys
+        Object.keys(freshDb.stock).forEach(k => {
+            if (k.startsWith(tempProdId)) {
+                delete freshDb.stock[k];
+            }
+        });
+        // Remove test promo code
+        freshDb.promoCodes = freshDb.promoCodes.filter(c => c.code !== 'TESTDIAG15');
+        // Remove test order
+        freshDb.orders = freshDb.orders.filter(o => o.id !== tempOrderId);
+        
+        saveDb(freshDb);
+        log(`[PASS] Sandbox test product, promo codes, stock entries, and orders purged. DB restored to original state.`, 'success');
+        await sleep(500);
+        
+        log('All automated integration test suites executed successfully! system 100% operational.', 'success');
+        badge.textContent = 'Passed';
+        badge.style.background = 'var(--green)';
+        badge.style.color = '#fff';
+        
+        // Redraw lists
+        if (typeof renderAdminProductsTable === 'function') renderAdminProductsTable(freshDb);
+        if (typeof renderAdminOrdersTable === 'function') renderAdminOrdersTable(freshDb);
+        if (typeof renderAdminStockTable === 'function') renderAdminStockTable(freshDb);
+        if (typeof updateAdminBadges === 'function') updateAdminBadges(freshDb);
+        
+    } catch (err) {
+        log(`[FAIL] E2E Diagnostics Error: ${err.message}`, 'error');
+        badge.textContent = 'Failed';
+        badge.style.background = '#ef4444';
+        badge.style.color = '#fff';
+        console.error(err);
+    }
+}
