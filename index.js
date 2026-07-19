@@ -176,6 +176,42 @@ async function syncDbToSupabase(db) {
     }
 }
 
+async function uploadImageToSupabase(file) {
+    if (supabaseClient) {
+        try {
+            const fileExt = file.name.split('.').pop();
+            const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+            const filePath = `${fileName}`;
+            
+            const { data, error } = await supabaseClient.storage
+                .from('product-images')
+                .upload(filePath, file, {
+                    cacheControl: '3600',
+                    upsert: false
+                });
+                
+            if (!error) {
+                const { data: urlData } = supabaseClient.storage
+                    .from('product-images')
+                    .getPublicUrl(filePath);
+                return urlData.publicUrl;
+            } else {
+                console.warn('Supabase storage upload error, using base64 fallback:', error.message);
+            }
+        } catch (err) {
+            console.error('Supabase storage exception, using base64 fallback:', err);
+        }
+    }
+    
+    // Fallback: Convert file locally to base64 string
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(event.target.result);
+        reader.onerror = (err) => reject(err);
+        reader.readAsDataURL(file);
+    });
+}
+
 function getLocalStorageDb() {
     let db = localStorage.getItem(DB_KEY);
     if (!db) {
@@ -1103,29 +1139,35 @@ function initAdminPage() {
         prodModal.classList.add('hidden');
     });
 
-    // Multi-file upload selector listener (converts to base64)
+    // Multi-file upload selector listener (uploads to Supabase or converts to base64)
     const fileInput = document.getElementById('prod-image-file');
     
-    fileInput.addEventListener('change', (e) => {
+    fileInput.addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
         
+        showToast(`Processing ${files.length} image(s)...`, 'info');
+        
         let loadedCount = 0;
-        files.forEach(file => {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                selectedProductImages.push(event.target.result);
+        for (const file of files) {
+            try {
+                const imageUrl = await uploadImageToSupabase(file);
+                selectedProductImages.push(imageUrl);
                 loadedCount++;
-                if (loadedCount === files.length) {
-                    // Set active index to the last uploaded image
-                    modalCarouselIndex = selectedProductImages.length - 1;
-                    renderModalCarousel();
-                    fileInput.value = ''; // Reset input
-                    showToast(`${files.length} images loaded successfully.`, 'success');
-                }
-            };
-            reader.readAsDataURL(file);
-        });
+            } catch (err) {
+                console.error('Failed to process image:', err);
+            }
+        }
+        
+        if (loadedCount > 0) {
+            // Set active index to the last uploaded image
+            modalCarouselIndex = selectedProductImages.length - 1;
+            renderModalCarousel();
+            fileInput.value = ''; // Reset input
+            showToast(`${loadedCount} image(s) loaded successfully.`, 'success');
+        } else {
+            showToast('Failed to process uploaded image(s).', 'error');
+        }
     });
 
     // Trigger file selection when clicking the placeholder
