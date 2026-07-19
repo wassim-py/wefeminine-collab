@@ -12,6 +12,11 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY && typeof supabase !== 'undefined') {
     supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 
+// --- TELEGRAM BOT NOTIFICATIONS ---
+// Paste your Telegram Bot credentials here to receive instant notifications:
+const TELEGRAM_BOT_TOKEN = "8677436730:AAE6-sI41AKfu9YbcblchP9VaKaoWQ5YdZI"; 
+const TELEGRAM_CHAT_ID = "723037684";
+
 // --- DATABASE MANAGEMENT (localStorage wrapper) ---
 const DB_KEY = 'aeroflex_store_db';
 const AUTH_KEY = 'aeroflex_admin_authenticated';
@@ -990,6 +995,9 @@ function submitCodOrder() {
     // 6. Persist Database
     saveDb(db);
     
+    // Send Telegram Notification
+    sendTelegramOrderNotification(newOrder);
+    
     // 7. Reset Form fields (except promo code)
     document.getElementById('cust-name').value = '';
     document.getElementById('cust-phone').value = '';
@@ -1004,6 +1012,47 @@ function submitCodOrder() {
     document.getElementById('order-success-modal').classList.remove('hidden');
     
     showToast(`Order placed successfully! Reference: ${newOrderId}`, 'success');
+}
+
+async function sendTelegramOrderNotification(order) {
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+    
+    const messageText = `🛍️ *New COD Order Placed!*\n\n` +
+        `*Order Reference:* \`${order.id}\`\n` +
+        `*Date:* ${new Date(order.date).toLocaleString()}\n\n` +
+        `👤 *Customer Details:*\n` +
+        `*Name:* ${order.customerName}\n` +
+        `*Phone:* ${order.customerPhone}\n` +
+        `*Address:* ${order.customerAddress}\n\n` +
+        `📦 *Product Ordered:*\n` +
+        `*Product:* ${order.productName}\n` +
+        `*Color:* ${order.color}\n` +
+        `*Size:* ${order.size}\n\n` +
+        `🚚 *Fulfillment Details:*\n` +
+        `*Delivery:* ${order.shippingName} (${order.shippingPrice === 0 ? 'FREE' : order.shippingPrice + ' DA'})\n` +
+        `*Promo Code:* ${order.promoCode || 'None'}\n` +
+        `*Total Amount:* *${order.price.toLocaleString()} DA*`;
+
+    try {
+        const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: TELEGRAM_CHAT_ID,
+                text: messageText,
+                parse_mode: 'Markdown'
+            })
+        });
+        
+        const data = await response.json();
+        if (!data.ok) {
+            console.error('Telegram API error:', data.description);
+        } else {
+            console.log('Telegram notification sent successfully.');
+        }
+    } catch (err) {
+        console.error('Failed to send Telegram notification:', err);
+    }
 }
 
 // --- BANNER COUNTDOWN TIMER ---
