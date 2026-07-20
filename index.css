@@ -1495,26 +1495,47 @@ li {
 
 /* --- ADMIN VIEW LAYOUT --- */
 #admin-view {
-    display: grid;
-    grid-template-columns: 260px 1fr;
+    display: flex;
     min-height: 100vh;
     background: #ffffff;
 }
 
 /* Admin Sidebar Header (Large Screens) */
 .admin-nav-header {
-    position: sticky;
+    position: fixed;
     top: 0;
-    height: 100vh;
-    background: #faf6f3;
-    border-right: 1px solid var(--border);
-    border-bottom: none;
+    left: 0;
+    bottom: 0;
+    width: 260px !important;
+    right: auto !important;
+    height: 100vh !important;
+    background: #faf6f3 !important;
+    border-right: 1px solid var(--border) !important;
+    border-bottom: none !important;
     z-index: 100;
     display: flex;
     flex-direction: column;
     padding: 32px 0;
     align-items: stretch;
     transition: var(--transition);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(220, 164, 150, 0.25) transparent;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+.admin-nav-header::-webkit-scrollbar {
+    width: 6px;
+}
+
+.admin-nav-header::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.admin-nav-header::-webkit-scrollbar-thumb {
+    background-color: rgba(220, 164, 150, 0.25);
+    border-radius: 3px;
 }
 
 .admin-nav-header .nav-container {
@@ -1611,6 +1632,7 @@ li {
     display: flex;
     flex-direction: column;
     flex: 1;
+    margin-left: 260px;
     padding-top: 0;
     background: #ffffff;
 }
@@ -2194,6 +2216,7 @@ input:checked + .slider:before {
         padding: 0;
         flex-direction: row;
         align-items: center;
+        overflow-y: visible;
     }
 
     .admin-nav-header .nav-container {
@@ -2227,6 +2250,8 @@ input:checked + .slider:before {
         z-index: 99;
         transform: translateY(-120%);
         transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        max-height: calc(100vh - 85px);
+        overflow-y: auto;
     }
 
     .admin-mobile-menu.open {
@@ -2256,6 +2281,7 @@ input:checked + .slider:before {
     }
 
     .admin-main {
+        margin-left: 0;
         padding-top: 85px;
     }
     
