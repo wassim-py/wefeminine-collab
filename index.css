@@ -1019,6 +1019,7 @@ li {
 
 .input-wrapper {
     position: relative;
+    display: flex;
 }
 
 .input-wrapper i {
@@ -1053,10 +1054,22 @@ li {
 .promo-input-row {
     display: flex;
     gap: 12px;
+    align-items: stretch;
 }
 
 .promo-input-row .input-wrapper {
     flex: 1;
+}
+
+.promo-input-row button {
+    border-radius: var(--radius) !important;
+    padding: 0 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .promo-feedback {

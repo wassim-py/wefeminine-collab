@@ -12,10 +12,17 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY && typeof supabase !== 'undefined') {
     supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 
-// --- TELEGRAM BOT NOTIFICATIONS ---
-// Paste your Telegram Bot credentials here to receive instant notifications:
-const TELEGRAM_BOT_TOKEN = "8677436730:AAE6-sI41AKfu9YbcblchP9VaKaoWQ5YdZI"; 
-const TELEGRAM_CHAT_ID = "723037684";
+// --- TELEGRAM BOT NOTIFICATIONS (SECURED SYSTEM) ---
+const FALLBACK_TELEGRAM_TOKEN = "8677436730:AAE6-sI41AKfu9YbcblchP9VaKaoWQ5YdZI"; 
+const FALLBACK_TELEGRAM_CHAT_ID = "723037684";
+
+function getTelegramCredentials() {
+    const db = getDb();
+    return {
+        botToken: (db && db.security && db.security.telegramBotToken) || FALLBACK_TELEGRAM_TOKEN,
+        chatId: (db && db.security && db.security.telegramChatId) || FALLBACK_TELEGRAM_CHAT_ID
+    };
+}
 
 // --- DATABASE MANAGEMENT (localStorage wrapper) ---
 const DB_KEY = 'aeroflex_store_db';
@@ -325,6 +332,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Setup routing and tab listeners
     initNavigation();
+    initConfirmModal();
     initPublicPage();
     initAdminPage();
     initCarousel();
@@ -352,7 +360,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Render lucide icons
     lucide.createIcons();
+
+    // Poll Supabase for database updates every 5 seconds to sync stock and orders in real-time
+    setInterval(async () => {
+        if (!supabaseClient) return;
+        
+        const isAdminView = window.location.hash.startsWith('#admin');
+        
+        if (isAdminView) {
+            const isAuthenticated = sessionStorage.getItem(AUTH_KEY) === 'true';
+            if (isAuthenticated && !isAnyModalOpen()) {
+                await fetchDbFromSupabase();
+                renderAdminDashboard();
+            }
+        } else {
+            await fetchDbFromSupabase();
+            renderPublicStore();
+        }
+    }, 5000);
 });
+
+function isAnyModalOpen() {
+    const modals = [
+        'product-form-modal',
+        'code-form-modal',
+        'shipping-form-modal',
+        'confirm-modal',
+        'admin-auth-modal'
+    ];
+    return modals.some(id => {
+        const el = document.getElementById(id);
+        return el && !el.classList.contains('hidden');
+    });
+}
 
 // --- TOAST NOTIFICATIONS ---
 function showToast(message, type = 'success') {
@@ -491,7 +531,7 @@ function renderCarousel(product) {
 
 // --- VIEW ROUTING AND NAV INTERACTION ---
 function initNavigation() {
-    const handleRoute = () => {
+    const handleRoute = async () => {
         const hash = window.location.hash;
         const publicView = document.getElementById('public-view');
         const adminView = document.getElementById('admin-view');
@@ -500,6 +540,9 @@ function initNavigation() {
             // Check auth
             const isAuthenticated = sessionStorage.getItem(AUTH_KEY) === 'true';
             if (isAuthenticated) {
+                // Fetch fresh cloud database on routing to admin view
+                await fetchDbFromSupabase();
+                
                 publicView.classList.add('hidden');
                 adminView.classList.remove('hidden');
                 renderAdminDashboard();
@@ -619,6 +662,40 @@ function checkLockoutState() {
     }
 }
 
+// --- CUSTOM DELETION CONFIRMATION MODAL ---
+let currentConfirmAction = null;
+
+function showCustomConfirm(title, message, onConfirm) {
+    const modal = document.getElementById('confirm-modal');
+    if (!modal) return;
+    
+    document.getElementById('confirm-modal-title').textContent = title;
+    document.getElementById('confirm-modal-desc').textContent = message;
+    
+    currentConfirmAction = onConfirm;
+    modal.classList.remove('hidden');
+    lucide.createIcons();
+}
+
+function initConfirmModal() {
+    const modal = document.getElementById('confirm-modal');
+    if (!modal) return;
+    
+    const closeModal = () => {
+        modal.classList.add('hidden');
+        currentConfirmAction = null;
+    };
+    
+    document.getElementById('confirm-modal-cancel').addEventListener('click', closeModal);
+    
+    document.getElementById('confirm-modal-submit').addEventListener('click', () => {
+        if (typeof currentConfirmAction === 'function') {
+            currentConfirmAction();
+        }
+        closeModal();
+    });
+}
+
 // --- ADMIN PIN AUTHENTICATION MODAL ---
 function showAdminAuthModal(show) {
     const modal = document.getElementById('admin-auth-modal');
@@ -647,6 +724,8 @@ document.getElementById('admin-auth-form').addEventListener('submit', async (e) 
     
     const pin = document.getElementById('admin-pin').value;
     const errMsg = document.getElementById('auth-error-msg');
+    // Fetch latest database from Supabase before checking credentials
+    await fetchDbFromSupabase();
     const db = getDb();
     
     // Hash entered PIN
@@ -761,14 +840,14 @@ function initPublicPage() {
     }
 
     // Promo Code Application
-    document.getElementById('apply-promo-btn').addEventListener('click', () => {
-        applyPromoCode();
+    document.getElementById('apply-promo-btn').addEventListener('click', async () => {
+        await applyPromoCode();
     });
 
     // COD Checkout Form Submission
-    document.getElementById('cod-checkout-form').addEventListener('submit', (e) => {
+    document.getElementById('cod-checkout-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        submitCodOrder();
+        await submitCodOrder();
     });
 
     // Success Modal Close
@@ -870,17 +949,23 @@ function updatePriceCalculation(basePrice) {
     // 1. Calculate discount
     let discountAmount = 0;
     if (storeState.appliedPromo) {
-        discountAmount = basePrice * (storeState.appliedPromo.discount / 100);
+        const isCollab = storeState.appliedPromo.type === 'collaborator';
+        discountAmount = basePrice * ((storeState.appliedPromo.discount || 0) / 100);
         finalPrice = basePrice - discountAmount;
         
         document.getElementById('summary-discount').textContent = `-${discountAmount.toLocaleString()} DA`;
-        discountRow.style.display = 'flex';
+        // Hide discount row in receipt if it's 0 DA discount
+        discountRow.style.display = discountAmount > 0 ? 'flex' : 'none';
         
         promoFeedback.className = 'promo-feedback success';
-        promoFeedback.textContent = `تم تطبيق الكود ${storeState.appliedPromo.code}: خصم -${storeState.appliedPromo.discount}%!`;
-        
-        promoDiscountBadge.style.display = 'block';
-        promoDiscountBadge.textContent = `-${storeState.appliedPromo.discount}% OFF`;
+        if (isCollab) {
+            promoFeedback.textContent = `تم تطبيق كود الشريك: ${storeState.appliedPromo.code}`;
+            promoDiscountBadge.style.display = 'none';
+        } else {
+            promoFeedback.textContent = `تم تطبيق الكود ${storeState.appliedPromo.code}: خصم -${storeState.appliedPromo.discount}%!`;
+            promoDiscountBadge.style.display = 'block';
+            promoDiscountBadge.textContent = `-${storeState.appliedPromo.discount}% OFF`;
+        }
     } else {
         discountRow.style.display = 'none';
         promoDiscountBadge.style.display = 'none';
@@ -910,13 +995,20 @@ function updatePriceCalculation(basePrice) {
     document.getElementById('summary-total').textContent = `${grandTotal.toLocaleString()} DA`;
 }
 
-function applyPromoCode() {
+async function applyPromoCode() {
     const input = document.getElementById('promo-code');
     const codeEntered = input.value.trim().toUpperCase();
     const promoFeedback = document.getElementById('promo-feedback-msg');
     
+    // Fetch fresh database from Supabase cloud so customers can use newly created codes immediately
+    await fetchDbFromSupabase();
+    
     if (!codeEntered) {
         storeState.appliedPromo = null;
+        if (promoFeedback) {
+            promoFeedback.className = 'promo-feedback';
+            promoFeedback.textContent = '';
+        }
         renderPublicStore();
         return;
     }
@@ -930,13 +1022,18 @@ function applyPromoCode() {
         showToast(`Promo code "${codeEntered}" applied successfully!`, 'success');
     } else {
         storeState.appliedPromo = null;
-        promoFeedback.className = 'promo-feedback error';
-        promoFeedback.textContent = 'كود الخصم غير صحيح أو غير مفعّل حالياً.';
+        if (promoFeedback) {
+            promoFeedback.className = 'promo-feedback error';
+            promoFeedback.textContent = 'كود الخصم غير صحيح أو غير مفعّل حالياً.';
+        }
         renderPublicStore();
     }
 }
 
-function submitCodOrder() {
+async function submitCodOrder() {
+    // 1. Fetch the absolute latest database state from Supabase first
+    await fetchDbFromSupabase();
+    
     const db = getDb();
     const product = db.products.find(p => p.id === storeState.selectedProductId);
     if (!product) return;
@@ -944,7 +1041,7 @@ function submitCodOrder() {
     const variantKey = `${product.id}:${storeState.selectedColor}:${storeState.selectedSize}`;
     const stockCount = db.stock[variantKey] || 0;
     
-    // 1. Double check stock count in DB
+    // 2. Double check stock count in DB
     if (stockCount <= 0) {
         showToast('Sorry! This exact size/color combination has just sold out.', 'error');
         renderPublicStore();
@@ -985,6 +1082,8 @@ function submitCodOrder() {
         size: storeState.selectedSize,
         price: parseFloat(pricePaid.toFixed(0)),
         promoCode: storeState.appliedPromo ? storeState.appliedPromo.code : '',
+        promoType: storeState.appliedPromo ? (storeState.appliedPromo.type || 'discount') : '',
+        collaboratorCommission: storeState.appliedPromo ? (storeState.appliedPromo.commission || 0) : 0,
         shippingName: shippingName,
         shippingPrice: shippingPrice,
         status: 'Pending'
@@ -1015,8 +1114,19 @@ function submitCodOrder() {
 }
 
 async function sendTelegramOrderNotification(order) {
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+    const creds = getTelegramCredentials();
+    if (!creds.botToken || !creds.chatId) return;
     
+    let promoLine = `*Promo Code:* ${order.promoCode || 'None'}`;
+    if (order.promoCode) {
+        const isCollab = order.promoType === 'collaborator';
+        if (isCollab) {
+            promoLine = `*Promo Code (Collaborator):* ${order.promoCode} (Commission: ${order.collaboratorCommission} DA)`;
+        } else {
+            promoLine = `*Promo Code (Discount):* ${order.promoCode}`;
+        }
+    }
+
     const messageText = `🛍️ *New COD Order Placed!*\n\n` +
         `*Order Reference:* \`${order.id}\`\n` +
         `*Date:* ${new Date(order.date).toLocaleString()}\n\n` +
@@ -1030,15 +1140,15 @@ async function sendTelegramOrderNotification(order) {
         `*Size:* ${order.size}\n\n` +
         `🚚 *Fulfillment Details:*\n` +
         `*Delivery:* ${order.shippingName} (${order.shippingPrice === 0 ? 'FREE' : order.shippingPrice + ' DA'})\n` +
-        `*Promo Code:* ${order.promoCode || 'None'}\n` +
+        `${promoLine}\n` +
         `*Total Amount:* *${order.price.toLocaleString()} DA*`;
 
     try {
-        const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        const response = await fetch(`https://api.telegram.org/bot${creds.botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                chat_id: TELEGRAM_CHAT_ID,
+                chat_id: creds.chatId,
                 text: messageText,
                 parse_mode: 'Markdown'
             })
@@ -1122,6 +1232,7 @@ function initAdminPage() {
             const titles = {
                 'tab-stock': ['Live Stock Management', 'Monitor and adjust live stock counts for size/color variants.'],
                 'tab-orders': ['Cash on Delivery Orders', 'Manage fulfillment pipeline for customer COD orders.'],
+                'tab-finance': ['Finance Dashboard', 'Manage shop revenues, shipping fees collected, and collaborator commissions.'],
                 'tab-products': ['Product Catalog', 'Add or customize leggings styles, pricing, and variants.'],
                 'tab-codes': ['Discount & Promo Codes', 'Manage active discount codes that customers can enter at checkout.'],
                 'tab-shipping': ['Shipping Fees Manager', 'Configure delivery methods and customize pricing zones.'],
@@ -1302,17 +1413,21 @@ function initAdminPage() {
         e.preventDefault();
         if (selectedProductImages.length === 0) return;
         
-        if (confirm('Are you sure you want to remove this image from the product slides?')) {
-            selectedProductImages.splice(modalCarouselIndex, 1);
-            
-            // Adjust active index
-            if (modalCarouselIndex >= selectedProductImages.length && selectedProductImages.length > 0) {
-                modalCarouselIndex = selectedProductImages.length - 1;
+        showCustomConfirm(
+            'Remove Image',
+            'Are you sure you want to remove this image from the product slides?',
+            () => {
+                selectedProductImages.splice(modalCarouselIndex, 1);
+                
+                // Adjust active index
+                if (modalCarouselIndex >= selectedProductImages.length && selectedProductImages.length > 0) {
+                    modalCarouselIndex = selectedProductImages.length - 1;
+                }
+                
+                renderModalCarousel();
+                showToast('Image removed.', 'info');
             }
-            
-            renderModalCarousel();
-            showToast('Image removed.', 'info');
-        }
+        );
     });
 
     // Custom color adding handler
@@ -1347,9 +1462,38 @@ function initAdminPage() {
 
     // --- PROMO CODES TAB ACTIONS ---
     const codeModal = document.getElementById('code-form-modal');
+    const codeTypeSelect = document.getElementById('promo-code-type');
+    const discountGroup = document.getElementById('promo-discount-group');
+    const commissionGroup = document.getElementById('promo-commission-group');
+    const pctInput = document.getElementById('promo-code-pct');
+    const commInput = document.getElementById('promo-code-comm');
+
+    if (codeTypeSelect) {
+        codeTypeSelect.addEventListener('change', () => {
+            if (codeTypeSelect.value === 'discount') {
+                discountGroup.style.display = 'block';
+                pctInput.setAttribute('required', 'true');
+                commissionGroup.style.display = 'none';
+                commInput.removeAttribute('required');
+            } else {
+                discountGroup.style.display = 'none';
+                pctInput.removeAttribute('required');
+                commissionGroup.style.display = 'block';
+                commInput.setAttribute('required', 'true');
+            }
+        });
+    }
+
     document.getElementById('add-code-btn').addEventListener('click', () => {
         document.getElementById('code-modal-title').textContent = 'New Promo Code';
         document.getElementById('code-edit-form').reset();
+        
+        // Reset modal inputs visibility state
+        discountGroup.style.display = 'block';
+        pctInput.setAttribute('required', 'true');
+        commissionGroup.style.display = 'none';
+        commInput.removeAttribute('required');
+        
         codeModal.classList.remove('hidden');
     });
     
@@ -1366,6 +1510,14 @@ function initAdminPage() {
     document.getElementById('export-orders-btn').addEventListener('click', () => {
         exportOrdersCsv();
     });
+
+    // Export Finance Report to CSV
+    const exportFinanceBtn = document.getElementById('export-finance-btn');
+    if (exportFinanceBtn) {
+        exportFinanceBtn.addEventListener('click', () => {
+            exportFinanceCsv();
+        });
+    }
 }
 
 // --- DYNAMIC FORM PILL SELECTORS FOR ADMIN PROD MODAL ---
@@ -1437,17 +1589,21 @@ function renderFormPillSelectors() {
                 showToast('You must keep at least one available color choice.', 'error');
                 return;
             }
-            if (confirm(`Are you sure you want to delete color option "${color}"?`)) {
-                // Remove from selection
-                selectedPillColors = selectedPillColors.filter(c => c !== color);
-                // Delete color option
-                const idx = ADMIN_AVAILABLE_COLORS.indexOf(color);
-                if (idx > -1) {
-                    ADMIN_AVAILABLE_COLORS.splice(idx, 1);
+            showCustomConfirm(
+                'Delete Color Option',
+                `Are you sure you want to delete color option "${color}"?`,
+                () => {
+                    // Remove from selection
+                    selectedPillColors = selectedPillColors.filter(c => c !== color);
+                    // Delete color option
+                    const idx = ADMIN_AVAILABLE_COLORS.indexOf(color);
+                    if (idx > -1) {
+                        ADMIN_AVAILABLE_COLORS.splice(idx, 1);
+                    }
+                    renderFormPillSelectors();
+                    showToast(`Color "${color}" removed from choices list.`, 'info');
                 }
-                renderFormPillSelectors();
-                showToast(`Color "${color}" removed from choices list.`, 'info');
-            }
+            );
         });
         
         pill.appendChild(deleteSpan);
@@ -1517,6 +1673,9 @@ function renderAdminDashboard() {
     
     // 5. RENDER SHIPPING RATES
     renderAdminShippingTable(db);
+    
+    // 6. RENDER FINANCE DASHBOARD
+    renderAdminFinanceDashboard(db);
     
     lucide.createIcons();
 }
@@ -1607,22 +1766,36 @@ function renderAdminOrdersTable(db) {
             <td>
                 <strong class="text-green">${(order.price || 0).toLocaleString()} DA</strong>
                 <div style="font-size:0.75rem; color:var(--text-muted);">Shipping: ${order.shippingName || 'Standard Delivery'} (${order.shippingPrice === 0 ? 'FREE' : (order.shippingPrice || 0) + ' DA'})</div>
-                ${order.promoCode ? `<div style="font-size:0.75rem; color:var(--text-muted);">Promo: ${order.promoCode}</div>` : ''}
+                ${order.promoCode ? (() => {
+                    const isCollab = order.promoType === 'collaborator';
+                    if (isCollab) {
+                        return `<div style="font-size:0.75rem; color:var(--text-muted);">Collab: <strong>${order.promoCode}</strong><br><span class="text-green" style="font-weight:bold; font-size:0.7rem;">+${(order.collaboratorCommission || 0).toLocaleString()} DA Comm.</span></div>`;
+                    }
+                    return `<div style="font-size:0.75rem; color:var(--text-muted);">Promo: <strong>${order.promoCode}</strong></div>`;
+                })() : ''}
             </td>
             <td><span class="badge-status ${statusClass}">${order.status}</span></td>
             <td>
-                <select class="action-select" data-id="${order.id}">
-                    <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>Pending</option>
-                    <option value="Shipped" ${order.status === 'Shipped' ? 'selected' : ''}>Shipped</option>
-                    <option value="Delivered" ${order.status === 'Delivered' ? 'selected' : ''}>Delivered</option>
-                    <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
-                </select>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <select class="action-select" data-id="${order.id}" style="width: 110px;">
+                        <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>Pending</option>
+                        <option value="Shipped" ${order.status === 'Shipped' ? 'selected' : ''}>Shipped</option>
+                        <option value="Delivered" ${order.status === 'Delivered' ? 'selected' : ''}>Delivered</option>
+                        <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
+                    </select>
+                    <button class="btn btn-outline btn-sm btn-delete-order text-red" data-id="${order.id}" style="padding: 6px 10px; height: 34px;"><i data-lucide="trash-2" style="width: 14px; height: 14px;"></i></button>
+                </div>
             </td>
         `;
         
         // Listen to select status change
         tr.querySelector('.action-select').addEventListener('change', (e) => {
             updateOrderStatus(order.id, e.target.value);
+        });
+        
+        // Listen to delete button click
+        tr.querySelector('.btn-delete-order').addEventListener('click', () => {
+            deleteOrder(order.id);
         });
 
         body.appendChild(tr);
@@ -1786,27 +1959,31 @@ function saveProduct() {
 }
 
 function deleteProduct(id) {
-    if (confirm('Are you sure you want to delete this product? All its size/color stock counts will be deleted.')) {
-        const db = getDb();
-        db.products = db.products.filter(p => p.id !== id);
-        
-        // Delete all stock references matching this product ID
-        Object.keys(db.stock).forEach(key => {
-            if (key.startsWith(id + ':')) {
-                delete db.stock[key];
+    showCustomConfirm(
+        'Delete Product',
+        'Are you sure you want to permanently delete this product? All its size/color stock counts will be deleted.',
+        () => {
+            const db = getDb();
+            db.products = db.products.filter(p => p.id !== id);
+            
+            // Delete all stock references matching this product ID
+            Object.keys(db.stock).forEach(key => {
+                if (key.startsWith(id + ':')) {
+                    delete db.stock[key];
+                }
+            });
+            
+            // If the deleted product was selected, revert to first product
+            if (storeState.selectedProductId === id && db.products.length > 0) {
+                storeState.selectedProductId = db.products[0].id;
+                storeState.selectedColor = db.products[0].colors[0];
+                storeState.selectedSize = db.products[0].sizes[0];
             }
-        });
-        
-        // If the deleted product was selected, revert to first product
-        if (storeState.selectedProductId === id && db.products.length > 0) {
-            storeState.selectedProductId = db.products[0].id;
-            storeState.selectedColor = db.products[0].colors[0];
-            storeState.selectedSize = db.products[0].sizes[0];
+            
+            saveDb(db);
+            showToast('Product deleted.', 'info');
         }
-        
-        saveDb(db);
-        showToast('Product deleted.', 'info');
-    }
+    );
 }
 
 function renderAdminCodesTable(db) {
@@ -1816,9 +1993,21 @@ function renderAdminCodesTable(db) {
     db.promoCodes.forEach(item => {
         const tr = document.createElement('tr');
         
+        // Backward compatibility: default missing type to 'discount'
+        const type = item.type || 'discount';
+        const typeLabel = type === 'discount' ? 'Standard Discount' : 'Collaborator Code';
+        
+        let valueLabel = '';
+        if (type === 'discount') {
+            valueLabel = `${item.discount || 0}% Off`;
+        } else {
+            valueLabel = `Commission: ${(item.commission || 0).toLocaleString()} DA`;
+        }
+        
         tr.innerHTML = `
             <td><strong style="font-family:monospace; font-size:1.1rem;">${item.code}</strong></td>
-            <td><strong>${item.discount}% Off</strong></td>
+            <td><span class="color-tag" style="background:${type === 'discount' ? 'rgba(220,164,150,0.15)' : 'rgba(163,177,155,0.15)'}; color:${type === 'discount' ? 'var(--primary)' : '#6d7b65'}; font-size:0.75rem; border-radius:12px; padding:3px 8px;">${typeLabel}</span></td>
+            <td><strong>${valueLabel}</strong></td>
             <td>
                 <label class="switch">
                     <input type="checkbox" class="code-toggle" data-code="${item.code}" ${item.active ? 'checked' : ''}>
@@ -1857,7 +2046,7 @@ function togglePromoCode(code, isActive) {
 function savePromoCode() {
     const db = getDb();
     const name = document.getElementById('promo-code-name').value.trim().toUpperCase();
-    const pct = parseInt(document.getElementById('promo-code-pct').value);
+    const type = document.getElementById('promo-code-type').value;
     
     // Check duplication
     if (db.promoCodes.some(p => p.code === name)) {
@@ -1865,9 +2054,20 @@ function savePromoCode() {
         return;
     }
     
+    let discount = 0;
+    let commission = 0;
+    
+    if (type === 'discount') {
+        discount = parseInt(document.getElementById('promo-code-pct').value) || 0;
+    } else {
+        commission = parseFloat(document.getElementById('promo-code-comm').value) || 0;
+    }
+    
     db.promoCodes.push({
         code: name,
-        discount: pct,
+        type: type,
+        discount: discount,
+        commission: commission,
         active: true
     });
     
@@ -1942,6 +2142,192 @@ function renderAdminShippingTable(db) {
     });
 }
 
+function renderAdminFinanceDashboard(db) {
+    // 1. Calculate KPI Metrics
+    let grossRevenue = 0;
+    let netRevenue = 0;
+    let shippingCollected = 0;
+    let collabCommissions = 0;
+    
+    db.orders.forEach(order => {
+        const orderPrice = order.price || 0;
+        const shipPrice = order.shippingPrice || 0;
+        const comm = order.collaboratorCommission || 0;
+        
+        grossRevenue += orderPrice;
+        
+        if (order.status === 'Delivered') {
+            netRevenue += orderPrice;
+            shippingCollected += shipPrice;
+            collabCommissions += comm;
+        }
+    });
+    
+    const netProfit = netRevenue - collabCommissions;
+    
+    const elGross = document.getElementById('finance-gross-revenue');
+    const elNet = document.getElementById('finance-net-revenue');
+    const elShip = document.getElementById('finance-shipping-collected');
+    const elCollab = document.getElementById('finance-collab-commissions');
+    const elProfit = document.getElementById('finance-net-profit');
+    
+    if (elGross) elGross.textContent = `${grossRevenue.toLocaleString()} DA`;
+    if (elNet) elNet.textContent = `${netRevenue.toLocaleString()} DA`;
+    if (elShip) elShip.textContent = `${shippingCollected.toLocaleString()} DA`;
+    if (elCollab) elCollab.textContent = `${collabCommissions.toLocaleString()} DA`;
+    if (elProfit) elProfit.textContent = `${netProfit.toLocaleString()} DA`;
+    
+    // 2. Collaborators Commission Ledger Table
+    const body = document.getElementById('admin-finance-table-body');
+    if (!body) return;
+    body.innerHTML = '';
+    
+    const collabGroups = {};
+    
+    // Pre-populate with registered collaborator codes
+    db.promoCodes.forEach(p => {
+        if (p.type === 'collaborator') {
+            collabGroups[p.code] = {
+                code: p.code,
+                deliveredCount: 0,
+                commissionPerUnit: p.commission || 0,
+                totalSalesValue: 0,
+                totalCommissionOwed: 0
+            };
+        }
+    });
+    
+    // Group from orders database
+    db.orders.forEach(order => {
+        if (order.promoCode && order.status === 'Delivered') {
+            const isCollab = order.promoType === 'collaborator';
+            if (isCollab) {
+                const code = order.promoCode;
+                const comm = order.collaboratorCommission || 0;
+                const orderPrice = order.price || 0;
+                
+                if (!collabGroups[code]) {
+                    collabGroups[code] = {
+                        code: code,
+                        deliveredCount: 0,
+                        commissionPerUnit: comm,
+                        totalSalesValue: 0,
+                        totalCommissionOwed: 0
+                    };
+                }
+                
+                collabGroups[code].deliveredCount += 1;
+                collabGroups[code].totalSalesValue += orderPrice;
+                collabGroups[code].totalCommissionOwed += comm;
+            }
+        }
+    });
+    
+    const collabList = Object.values(collabGroups);
+    
+    if (collabList.length === 0) {
+        body.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">No collaborator codes registered or used yet.</td></tr>`;
+        return;
+    }
+    
+    collabList.forEach(collab => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong style="font-family:monospace; font-size:1.05rem;">${collab.code}</strong></td>
+            <td><strong>${collab.deliveredCount}</strong></td>
+            <td>${collab.commissionPerUnit.toLocaleString()} DA</td>
+            <td>${collab.totalSalesValue.toLocaleString()} DA</td>
+            <td><strong class="text-green">${collab.totalCommissionOwed.toLocaleString()} DA</strong></td>
+        `;
+        body.appendChild(tr);
+    });
+}
+
+function exportFinanceCsv() {
+    const db = getDb();
+    
+    const collabGroups = {};
+    
+    db.promoCodes.forEach(p => {
+        if (p.type === 'collaborator') {
+            collabGroups[p.code] = {
+                code: p.code,
+                deliveredCount: 0,
+                commissionPerUnit: p.commission || 0,
+                totalSalesValue: 0,
+                totalCommissionOwed: 0
+            };
+        }
+    });
+    
+    db.orders.forEach(order => {
+        if (order.promoCode && order.status === 'Delivered') {
+            const isCollab = order.promoType === 'collaborator';
+            if (isCollab) {
+                const code = order.promoCode;
+                const comm = order.collaboratorCommission || 0;
+                const orderPrice = order.price || 0;
+                
+                if (!collabGroups[code]) {
+                    collabGroups[code] = {
+                        code: code,
+                        deliveredCount: 0,
+                        commissionPerUnit: comm,
+                        totalSalesValue: 0,
+                        totalCommissionOwed: 0
+                    };
+                }
+                
+                collabGroups[code].deliveredCount += 1;
+                collabGroups[code].totalSalesValue += orderPrice;
+                collabGroups[code].totalCommissionOwed += comm;
+            }
+        }
+    });
+    
+    const collabList = Object.values(collabGroups);
+    
+    let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
+    csvContent += "Collaborator Code,Delivered Orders,Commission Per Unit (DA),Total Sales Value (DA),Total Commission Owed (DA)\n";
+    
+    collabList.forEach(collab => {
+        csvContent += `"${collab.code}",${collab.deliveredCount},${collab.commissionPerUnit},${collab.totalSalesValue},${collab.totalCommissionOwed}\n`;
+    });
+    
+    let grossRevenue = 0;
+    let netRevenue = 0;
+    let shippingCollected = 0;
+    let collabCommissions = 0;
+    
+    db.orders.forEach(order => {
+        grossRevenue += (order.price || 0);
+        if (order.status === 'Delivered') {
+            netRevenue += (order.price || 0);
+            shippingCollected += (order.shippingPrice || 0);
+            collabCommissions += (order.collaboratorCommission || 0);
+        }
+    });
+    
+    const netProfit = netRevenue - collabCommissions;
+    
+    csvContent += "\n\n";
+    csvContent += "FINANCIAL SUMMARY\n";
+    csvContent += `Gross Potential Revenue,${grossRevenue} DA\n`;
+    csvContent += `Net Confirmed Revenue (Delivered),${netRevenue} DA\n`;
+    csvContent += `Shipping Fees Collected (Delivered),${shippingCollected} DA\n`;
+    csvContent += `Total Collaborator Commissions,${collabCommissions} DA\n`;
+    csvContent += `Net Shop Profit,${netProfit} DA\n`;
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `AeroFlex_Finance_Report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Financial CSV report downloaded.', 'success');
+}
+
 function toggleShippingActive(rateId, isActive) {
     const db = getDb();
     const rate = db.shippingRates.find(r => r.id === rateId);
@@ -1998,27 +2384,48 @@ function saveShippingRate() {
 }
 
 function deleteShippingRate(rateId) {
-    if (confirm('Are you sure you want to delete this shipping option?')) {
-        const db = getDb();
-        db.shippingRates = db.shippingRates.filter(r => r.id !== rateId);
-        saveDb(db);
-        populateShippingDropdown();
-        showToast('Shipping option removed.', 'info');
-    }
+    showCustomConfirm(
+        'Delete Shipping Option',
+        'Are you sure you want to permanently delete this shipping option?',
+        () => {
+            const db = getDb();
+            db.shippingRates = db.shippingRates.filter(r => r.id !== rateId);
+            saveDb(db);
+            populateShippingDropdown();
+            showToast('Shipping option removed.', 'info');
+        }
+    );
 }
 
 function deletePromoCode(code) {
-    if (confirm(`Are you sure you want to delete promo code "${code}"?`)) {
-        const db = getDb();
-        db.promoCodes = db.promoCodes.filter(p => p.code === code);
-        
-        if (storeState.appliedPromo && storeState.appliedPromo.code === code) {
-            storeState.appliedPromo = null;
+    showCustomConfirm(
+        'Delete Promo Code',
+        `Are you sure you want to permanently delete promo code "${code}"?`,
+        () => {
+            const db = getDb();
+            db.promoCodes = db.promoCodes.filter(p => p.code !== code);
+            
+            if (storeState.appliedPromo && storeState.appliedPromo.code === code) {
+                storeState.appliedPromo = null;
+            }
+            
+            saveDb(db);
+            showToast('Promo code deleted.', 'info');
         }
-        
-        saveDb(db);
-        showToast('Promo code deleted.', 'info');
-    }
+    );
+}
+
+function deleteOrder(orderId) {
+    showCustomConfirm(
+        'Delete Order',
+        `Are you sure you want to permanently delete order "${orderId}"?`,
+        () => {
+            const db = getDb();
+            db.orders = db.orders.filter(o => o.id !== orderId);
+            saveDb(db);
+            showToast(`Order ${orderId} deleted successfully.`, 'info');
+        }
+    );
 }
 
 // --- SECURITY SETTINGS (CHANGE PASSWORD) ---
@@ -2067,6 +2474,30 @@ function initSecuritySettings() {
             hintText.innerHTML = 'Security PIN is customized by owner.';
         }
     });
+
+    // Populate Telegram configuration fields
+    const creds = getTelegramCredentials();
+    const tokenField = document.getElementById('telegram-config-token');
+    const chatField = document.getElementById('telegram-config-chatid');
+    if (tokenField) tokenField.value = creds.botToken;
+    if (chatField) chatField.value = creds.chatId;
+
+    // Save Telegram credentials listener
+    const telegramForm = document.getElementById('admin-telegram-config-form');
+    if (telegramForm) {
+        telegramForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const botToken = document.getElementById('telegram-config-token').value.trim();
+            const chatId = document.getElementById('telegram-config-chatid').value.trim();
+            
+            const db = getDb();
+            db.security.telegramBotToken = botToken;
+            db.security.telegramChatId = chatId;
+            saveDb(db);
+            
+            showToast('Telegram credentials updated successfully.', 'success');
+        });
+    }
 }
 
 // --- CSV EXPORT UTILITY ---
