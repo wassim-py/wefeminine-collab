@@ -42,6 +42,7 @@ const DEFAULT_DB = {
         {
             id: 'aeroflex-sculpt',
             name: 'AeroFlex Ultra-Sculpt Leggings',
+            activeHomepage: true,
             description: 'Engineered with our signature AeroCompress™ thread. The AeroFlex Ultra-Sculpt Leggings offer 100% squat-proof coverage, active moisture wicking, and an ultra-high waistband that stays put.',
             price: 5900, // 5,900 DA
             originalPrice: 8500, // 8,500 DA
@@ -128,6 +129,7 @@ let selectedPillColors = [];
 let selectedPillSizes = [];
 let selectedProductImages = []; // Holds list of image references for product being edited/added
 let modalCarouselIndex = 0; // Tracks currently active slide index inside the product editor modal
+let expandedStockProductIds = new Set(); // Tracks expanded stock accordion product IDs across render updates
 
 // --- CRYPTOGRAPHIC UTILS ---
 async function sha256(message) {
@@ -175,10 +177,20 @@ async function syncDbToSupabase(db) {
     
     if (!supabaseClient) return;
     
+    // Create a copy of the database payload so we don't mutate global state
+    const payload = JSON.parse(JSON.stringify(db));
+    
+    // Attach authentication token if logged in
+    const rawPin = sessionStorage.getItem('aeroflex_admin_raw_pin');
+    if (rawPin) {
+        if (!payload.security) payload.security = {};
+        payload.security.authToken = rawPin;
+    }
+    
     try {
         const { error } = await supabaseClient
             .from('store_db')
-            .update({ data: db })
+            .update({ data: payload })
             .eq('id', 1);
             
         if (error) throw error;
@@ -186,6 +198,46 @@ async function syncDbToSupabase(db) {
         console.error('Failed to sync database to Supabase Cloud:', err);
         showToast('Offline backup updated locally.', 'info');
     }
+}
+
+function compressAndResizeImage(file, maxWidth = 800, maxHeight = 800, quality = 0.7) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+                
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxHeight) {
+                        width = Math.round((width * maxHeight) / height);
+                        height = maxHeight;
+                    }
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL('image/jpeg', quality));
+            };
+            img.onerror = () => {
+                resolve(event.target.result); // Fallback to raw base64 if load fails
+            };
+        };
+        reader.onerror = () => {
+            resolve('');
+        };
+    });
 }
 
 async function uploadImageToSupabase(file) {
@@ -208,20 +260,15 @@ async function uploadImageToSupabase(file) {
                     .getPublicUrl(filePath);
                 return urlData.publicUrl;
             } else {
-                console.warn('Supabase storage upload error, using base64 fallback:', error.message);
+                console.warn('Supabase storage upload error, using base64 compressed fallback:', error.message);
             }
         } catch (err) {
-            console.error('Supabase storage exception, using base64 fallback:', err);
+            console.error('Supabase storage exception, using base64 compressed fallback:', err);
         }
     }
     
-    // Fallback: Convert file locally to base64 string
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (event) => resolve(event.target.result);
-        reader.onerror = (err) => reject(err);
-        reader.readAsDataURL(file);
-    });
+    // Fallback: Compress and resize file locally to a tiny base64 string (under 50KB)
+    return await compressAndResizeImage(file);
 }
 
 function getLocalStorageDb() {
@@ -263,6 +310,24 @@ function sanitizeDb(parsed) {
             needsSave = true;
         }
     });
+
+    const hasActive = parsed.products.some(p => p.activeHomepage === true);
+    if (!hasActive && parsed.products.length > 0) {
+        parsed.products[0].activeHomepage = true;
+        needsSave = true;
+    }
+    
+    let foundActive = false;
+    parsed.products.forEach(p => {
+        if (p.activeHomepage === true) {
+            if (foundActive) {
+                p.activeHomepage = false;
+                needsSave = true;
+            } else {
+                foundActive = true;
+            }
+        }
+    });
     
     if (!parsed.orders) {
         parsed.orders = [];
@@ -301,8 +366,24 @@ function getDb() {
     return globalDb;
 }
 
+function syncStoreStateWithActiveProduct(db) {
+    const activeProd = db.products.find(p => p.activeHomepage === true) || db.products[0];
+    if (activeProd) {
+        storeState.selectedProductId = activeProd.id;
+        if (!activeProd.colors.includes(storeState.selectedColor)) {
+            storeState.selectedColor = activeProd.colors[0];
+        }
+        if (!activeProd.sizes.includes(storeState.selectedSize)) {
+            storeState.selectedSize = activeProd.sizes[0];
+        }
+    }
+}
+
 function saveDb(db) {
     globalDb = db;
+    
+    // Ensure storeState matches active homepage product
+    syncStoreStateWithActiveProduct(db);
     
     // Trigger renders synchronously for instant UI updates
     renderPublicStore();
@@ -329,6 +410,10 @@ const INACTIVITY_TIMEOUT = 10 * 60 * 1000; // 10 minutes in milliseconds
 // --- INITIAL LOADING ---
 document.addEventListener('DOMContentLoaded', async () => {
     await fetchDbFromSupabase(); // Wait for cloud database fetch
+    
+    // Sync storeState to active homepage product
+    const db = getDb();
+    syncStoreStateWithActiveProduct(db);
     
     // Setup routing and tab listeners
     initNavigation();
@@ -730,12 +815,12 @@ document.getElementById('admin-auth-form').addEventListener('submit', async (e) 
     
     // Hash entered PIN
     const enteredHash = await sha256(pin);
-    
     if (enteredHash === db.security.hash) {
         // Success
         localStorage.removeItem(ATTEMPTS_KEY);
         localStorage.removeItem(LOCKOUT_KEY);
         sessionStorage.setItem(AUTH_KEY, 'true');
+        sessionStorage.setItem('aeroflex_admin_raw_pin', pin);
         showAdminAuthModal(false);
         window.location.hash = '#admin';
         showToast('Successfully authenticated as administrator.', 'success');
@@ -1340,54 +1425,7 @@ function initAdminPage() {
         fileInput.click();
     });
 
-    // Dynamic modal image slider renderer
-    function renderModalCarousel() {
-        const placeholder = document.getElementById('modal-carousel-placeholder');
-        const slideArea = document.getElementById('modal-carousel-slide-area');
-        const img = document.getElementById('modal-carousel-img');
-        const counter = document.getElementById('modal-carousel-counter');
-        const prevBtn = document.getElementById('modal-carousel-prev');
-        const nextBtn = document.getElementById('modal-carousel-next');
-        
-        if (!placeholder || !slideArea || !img) return;
-        
-        if (selectedProductImages.length === 0) {
-            placeholder.classList.remove('hidden');
-            slideArea.classList.add('hidden');
-            img.src = '';
-            document.getElementById('prod-image').value = '';
-            return;
-        }
-        
-        // Bounds checking
-        if (modalCarouselIndex >= selectedProductImages.length) {
-            modalCarouselIndex = selectedProductImages.length - 1;
-        }
-        if (modalCarouselIndex < 0) {
-            modalCarouselIndex = 0;
-        }
-        
-        placeholder.classList.add('hidden');
-        slideArea.classList.remove('hidden');
-        
-        // Load active image
-        img.src = selectedProductImages[modalCarouselIndex];
-        
-        // Sync backward compatibility hidden input (first image)
-        document.getElementById('prod-image').value = selectedProductImages[0];
-        
-        // Update slide counter
-        counter.textContent = `Image ${modalCarouselIndex + 1} of ${selectedProductImages.length}`;
-        
-        // Toggle arrow visibility
-        if (selectedProductImages.length <= 1) {
-            prevBtn.style.display = 'none';
-            nextBtn.style.display = 'none';
-        } else {
-            prevBtn.style.display = 'flex';
-            nextBtn.style.display = 'flex';
-        }
-    }
+
 
     // Modal carousel sliding actions
     document.getElementById('modal-carousel-prev').addEventListener('click', (e) => {
@@ -1609,8 +1647,6 @@ function renderFormPillSelectors() {
         pill.appendChild(deleteSpan);
         colorsContainer.appendChild(pill);
     });
-    // Update hidden field value
-    document.getElementById('prod-colors').value = selectedPillColors.join(', ');
 
     // 2. Sizes Selector
     sizesContainer.innerHTML = '';
@@ -1637,8 +1673,6 @@ function renderFormPillSelectors() {
         });
         sizesContainer.appendChild(pill);
     });
-    // Update hidden field value
-    document.getElementById('prod-sizes').value = selectedPillSizes.join(', ');
 }
 
 function renderAdminDashboard() {
@@ -1681,10 +1715,89 @@ function renderAdminDashboard() {
 }
 
 function renderAdminStockTable(db) {
-    const body = document.getElementById('admin-stock-table-body');
-    body.innerHTML = '';
+    const container = document.getElementById('admin-stock-accordion-container');
+    if (!container) return;
+    container.innerHTML = '';
     
     db.products.forEach(product => {
+        const item = document.createElement('div');
+        item.className = 'stock-accordion-item';
+        item.style.border = '1px solid var(--border)';
+        item.style.borderRadius = 'var(--radius)';
+        item.style.marginBottom = '12px';
+        item.style.overflow = 'hidden';
+        item.style.background = '#ffffff';
+        item.style.transition = 'box-shadow var(--transition)';
+        
+        const isExpanded = expandedStockProductIds.has(product.id);
+        
+        // Calculate total variants stock count
+        let totalStock = 0;
+        product.colors.forEach(color => {
+            product.sizes.forEach(size => {
+                const key = `${product.id}:${color}:${size}`;
+                totalStock += db.stock[key] !== undefined ? db.stock[key] : 0;
+            });
+        });
+        
+        // Header
+        const header = document.createElement('div');
+        header.className = 'stock-accordion-header';
+        header.style.padding = '14px 20px';
+        header.style.background = isExpanded ? 'rgba(220, 164, 150, 0.04)' : 'rgba(44, 37, 35, 0.02)';
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+        header.style.cursor = 'pointer';
+        header.style.transition = 'background var(--transition)';
+        header.style.userSelect = 'none';
+        
+        header.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <img src="${product.image}" alt="${product.name}" style="width: 36px; height: 36px; border-radius: var(--radius-sm); object-fit: cover; border: 1px solid var(--border);">
+                <div>
+                    <strong style="font-size: 0.9rem; color: var(--text-primary);">${product.name}</strong>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 1px;">Total Stock: ${totalStock} units</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span class="badge-status ${totalStock > 0 ? 'instock' : 'outofstock'}" style="font-size: 0.75rem; padding: 4px 10px;">
+                    ${totalStock > 0 ? 'Active' : 'Out of Stock'}
+                </span>
+                <i data-lucide="chevron-down" class="accordion-arrow" style="width: 16px; height: 16px; color: var(--text-muted); transition: transform 0.3s ease; ${isExpanded ? 'transform: rotate(180deg);' : ''}"></i>
+            </div>
+        `;
+        
+        // Content Area (Collapsible Table)
+        const content = document.createElement('div');
+        content.className = `stock-accordion-content ${isExpanded ? '' : 'hidden'}`;
+        content.style.borderTop = '1px solid var(--border)';
+        content.style.background = '#ffffff';
+        
+        const tableResponsive = document.createElement('div');
+        tableResponsive.className = 'table-responsive';
+        tableResponsive.style.padding = '0';
+        
+        const table = document.createElement('table');
+        table.className = 'admin-table';
+        table.style.margin = '0';
+        table.style.boxShadow = 'none';
+        table.style.border = 'none';
+        
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Color</th>
+                    <th>Size</th>
+                    <th style="width: 180px;">Stock Control</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+        
+        const tbody = table.querySelector('tbody');
+        
         product.colors.forEach(color => {
             product.sizes.forEach(size => {
                 const key = `${product.id}:${color}:${size}`;
@@ -1692,7 +1805,6 @@ function renderAdminStockTable(db) {
                 
                 const tr = document.createElement('tr');
                 
-                // Status Badge
                 let statusBadge = `<span class="badge-status instock">In Stock</span>`;
                 if (currentStock <= 0) {
                     statusBadge = `<span class="badge-status outofstock">Out of Stock</span>`;
@@ -1701,11 +1813,10 @@ function renderAdminStockTable(db) {
                 }
                 
                 tr.innerHTML = `
-                    <td><strong>${product.name}</strong></td>
                     <td><span class="color-tag">${color}</span></td>
-                    <td><span class="size-btn" style="width:36px; height:30px; display:inline-flex; pointer-events:none;">${size}</span></td>
+                    <td><span class="color-tag" style="background:rgba(6, 182, 212, 0.1); color: var(--text-primary); border-color: rgba(6, 182, 212, 0.2);">${size}</span></td>
                     <td>
-                        <div class="stock-control">
+                        <div class="stock-control" style="display: flex; gap: 4px; align-items: center;">
                             <button class="btn-ctrl btn-minus" data-key="${key}">-</button>
                             <input type="number" class="stock-input" value="${currentStock}" data-key="${key}">
                             <button class="btn-ctrl btn-plus" data-key="${key}">+</button>
@@ -1722,9 +1833,34 @@ function renderAdminStockTable(db) {
                     updateStockLevel(key, isNaN(val) ? 0 : val);
                 });
                 
-                body.appendChild(tr);
+                tbody.appendChild(tr);
             });
         });
+        
+        tableResponsive.appendChild(table);
+        content.appendChild(tableResponsive);
+        item.appendChild(header);
+        item.appendChild(content);
+        
+        // Toggle action
+        header.addEventListener('click', () => {
+            const isHidden = content.classList.contains('hidden');
+            const arrow = header.querySelector('.accordion-arrow');
+            
+            if (isHidden) {
+                content.classList.remove('hidden');
+                header.style.background = 'rgba(220, 164, 150, 0.04)';
+                if (arrow) arrow.style.transform = 'rotate(180deg)';
+                expandedStockProductIds.add(product.id);
+            } else {
+                content.classList.add('hidden');
+                header.style.background = 'rgba(44, 37, 35, 0.02)';
+                if (arrow) arrow.style.transform = 'rotate(0deg)';
+                expandedStockProductIds.delete(product.id);
+            }
+        });
+        
+        container.appendChild(item);
     });
 }
 
@@ -1852,6 +1988,12 @@ function renderAdminProductsTable(db) {
             <td>${colorsHtml}</td>
             <td>${sizesHtml}</td>
             <td>
+                <label class="switch">
+                    <input type="checkbox" class="homepage-toggle" data-id="${p.id}" ${p.activeHomepage ? 'checked disabled' : ''}>
+                    <span class="slider"></span>
+                </label>
+            </td>
+            <td>
                 <div class="order-actions">
                     <button class="btn btn-outline btn-sm btn-edit" data-id="${p.id}"><i data-lucide="edit"></i> Edit</button>
                     <button class="btn btn-outline btn-sm btn-delete text-red" data-id="${p.id}" ${db.products.length <= 1 ? 'disabled style="opacity:0.3;"' : ''}><i data-lucide="trash-2"></i> Delete</button>
@@ -1865,44 +2007,120 @@ function renderAdminProductsTable(db) {
             tr.querySelector('.btn-delete').addEventListener('click', () => deleteProduct(p.id));
         }
         
+        tr.querySelector('.homepage-toggle').addEventListener('change', (e) => {
+            if (e.target.checked) {
+                toggleHomepageProduct(p.id);
+            }
+        });
+        
         body.appendChild(tr);
     });
 }
 
-function openEditProductModal(productId) {
+function toggleHomepageProduct(productId) {
     const db = getDb();
-    const p = db.products.find(prod => prod.id === productId);
-    if (!p) return;
-    
-    document.getElementById('product-modal-title').textContent = 'Edit Product';
-    document.getElementById('edit-prod-id').value = p.id;
-    document.getElementById('prod-name').value = p.name;
-    document.getElementById('prod-desc').value = p.description;
-    document.getElementById('prod-price').value = p.price;
-    document.getElementById('prod-original-price').value = p.originalPrice;
-    document.getElementById('prod-image').value = p.image || '';
-    
-    // Ensure all product colors exist in global selection options
-    p.colors.forEach(color => {
-        if (!ADMIN_AVAILABLE_COLORS.includes(color)) {
-            ADMIN_AVAILABLE_COLORS.push(color);
-        }
+    db.products.forEach(p => {
+        p.activeHomepage = (p.id === productId);
     });
+    saveDb(db);
+    showToast('Homepage active product updated.', 'success');
+}
+
+function renderModalCarousel() {
+    const placeholder = document.getElementById('modal-carousel-placeholder');
+    const slideArea = document.getElementById('modal-carousel-slide-area');
+    const img = document.getElementById('modal-carousel-img');
+    const counter = document.getElementById('modal-carousel-counter');
+    const prevBtn = document.getElementById('modal-carousel-prev');
+    const nextBtn = document.getElementById('modal-carousel-next');
     
-    // Load images array and render modal carousel slider
-    selectedProductImages = p.images ? [...p.images] : (p.image ? [p.image] : []);
-    modalCarouselIndex = 0;
-    renderModalCarousel();
+    if (!placeholder || !slideArea || !img) return;
     
-    // Reset file input selector
-    document.getElementById('prod-image-file').value = '';
+    if (selectedProductImages.length === 0) {
+        placeholder.classList.remove('hidden');
+        slideArea.classList.add('hidden');
+        img.src = '';
+        document.getElementById('prod-image').value = '';
+        return;
+    }
     
-    // Synchronize dynamic color and size selects
-    selectedPillColors = [...p.colors];
-    selectedPillSizes = [...p.sizes];
-    renderFormPillSelectors();
+    // Bounds checking
+    if (modalCarouselIndex >= selectedProductImages.length) {
+        modalCarouselIndex = selectedProductImages.length - 1;
+    }
+    if (modalCarouselIndex < 0) {
+        modalCarouselIndex = 0;
+    }
     
-    document.getElementById('product-form-modal').classList.remove('hidden');
+    placeholder.classList.add('hidden');
+    slideArea.classList.remove('hidden');
+    
+    // Load active image
+    img.src = selectedProductImages[modalCarouselIndex];
+    
+    // Sync backward compatibility hidden input (first image)
+    document.getElementById('prod-image').value = selectedProductImages[0];
+    
+    // Update slide counter
+    if (counter) {
+        counter.textContent = `Image ${modalCarouselIndex + 1} of ${selectedProductImages.length}`;
+    }
+    
+    // Toggle arrow visibility
+    if (prevBtn && nextBtn) {
+        if (selectedProductImages.length <= 1) {
+            prevBtn.style.display = 'none';
+            nextBtn.style.display = 'none';
+        } else {
+            prevBtn.style.display = 'flex';
+            nextBtn.style.display = 'flex';
+        }
+    }
+}
+
+function openEditProductModal(productId) {
+    try {
+        const db = getDb();
+        const p = db.products.find(prod => prod.id === productId);
+        if (!p) {
+            showToast('Product not found in catalog.', 'error');
+            return;
+        }
+        
+        document.getElementById('product-modal-title').textContent = 'Edit Product';
+        document.getElementById('edit-prod-id').value = p.id;
+        document.getElementById('prod-name').value = p.name;
+        document.getElementById('prod-desc').value = p.description;
+        document.getElementById('prod-price').value = p.price;
+        document.getElementById('prod-original-price').value = p.originalPrice;
+        document.getElementById('prod-image').value = p.image || '';
+        
+        // Ensure all product colors exist in global selection options
+        const colorsList = p.colors || [];
+        colorsList.forEach(color => {
+            if (!ADMIN_AVAILABLE_COLORS.includes(color)) {
+                ADMIN_AVAILABLE_COLORS.push(color);
+            }
+        });
+        
+        // Load images array and render modal carousel slider
+        selectedProductImages = p.images ? [...p.images] : (p.image ? [p.image] : []);
+        modalCarouselIndex = 0;
+        renderModalCarousel();
+        
+        // Reset file input selector
+        document.getElementById('prod-image-file').value = '';
+        
+        // Synchronize dynamic color and size selects
+        selectedPillColors = p.colors ? [...p.colors] : [];
+        selectedPillSizes = p.sizes ? [...p.sizes] : [];
+        renderFormPillSelectors();
+        
+        document.getElementById('product-form-modal').classList.remove('hidden');
+    } catch (err) {
+        console.error('Error opening product edit modal:', err);
+        showToast('Error opening edit modal: ' + err.message, 'error');
+    }
 }
 
 function saveProduct() {
@@ -1963,7 +2181,8 @@ function saveProduct() {
             image,
             images,
             colors,
-            sizes
+            sizes,
+            activeHomepage: false
         };
         db.products.push(newProduct);
         
@@ -2540,6 +2759,7 @@ function initSecuritySettings() {
         const hashedNew = await sha256(newPass);
         db.security.hash = hashedNew;
         saveDb(db);
+        sessionStorage.setItem('aeroflex_admin_raw_pin', newPass);
         
         // Success
         form.reset();

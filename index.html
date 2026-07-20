@@ -504,23 +504,10 @@
                     <div class="admin-card">
                         <div class="card-header">
                             <h3>Inventory Grid</h3>
-                            <p>Update quantities to immediately reflect stock availability on the customer purchase form.</p>
+                            <p>Select a product to manage its size and color stock counts.</p>
                         </div>
-                        <div class="table-responsive">
-                            <table class="admin-table">
-                                <thead>
-                                    <tr>
-                                        <th>Product</th>
-                                        <th>Color</th>
-                                        <th>Size</th>
-                                        <th style="width: 250px;">Stock Control</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="admin-stock-table-body">
-                                    <!-- Dynamic rows -->
-                                </tbody>
-                            </table>
+                        <div id="admin-stock-accordion-container" style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
+                            <!-- Dynamic Accordions for each product -->
                         </div>
                     </div>
                 </div>
@@ -680,6 +667,7 @@
                                         <th>Base Price</th>
                                         <th>Colors Available</th>
                                         <th>Sizes Available</th>
+                                        <th>Active Homepage</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -793,7 +781,6 @@
                                          </div>
                                          <button type="button" class="btn btn-outline btn-sm" id="add-custom-color-btn" style="height: 38px; padding: 0 16px;"><i data-lucide="plus"></i> Add</button>
                                      </div>
-                                     <input type="hidden" id="prod-colors" required>
                                  </div>
                                  
                                  <!-- Cool Interactive Size Pill Selector -->
@@ -801,9 +788,8 @@
                                      <label>Select Sizes Available</label>
                                      <div class="admin-pill-selector" id="admin-sizes-selector">
                                          <!-- Toggled dynamically in JS -->
-                                     </div>
-                                     <input type="hidden" id="prod-sizes" required>
-                                </div>
+                                      </div>
+                                 </div>
                                 
                                 <button type="submit" class="btn btn-primary btn-block btn-large modal-submit-btn">
                                     <i data-lucide="save"></i> Save Product & Generate Variants
@@ -1061,8 +1047,6 @@
                 <button class="modal-close" id="auth-modal-close"><i data-lucide="x"></i></button>
             </div>
             <form id="admin-auth-form">
-                <p class="auth-instructions">Please enter your admin PIN to access the inventory and order dashboard.</p>
-                
                 <!-- Brute Force lockout display -->
                 <div id="auth-lockout-banner" class="text-red hidden" style="margin-bottom: 16px; font-size: 0.85rem; font-weight: 500; padding: 10px; background: rgba(216, 150, 145, 0.08); border-radius: 8px; border: 1px solid rgba(216, 150, 145, 0.2); text-align: center;"></div>
 
@@ -1074,7 +1058,6 @@
                     </div>
                     <span class="auth-error text-red" id="auth-error-msg"></span>
                 </div>
-                <div class="auth-hint" id="auth-hint-text">Default PIN: <span>admin123</span></div>
                 <button type="submit" class="btn btn-primary btn-block btn-large" id="admin-auth-submit-btn">Authenticate</button>
             </form>
         </div>
