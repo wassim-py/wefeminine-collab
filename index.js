@@ -40,39 +40,71 @@ const DEFAULT_DB = {
     },
     products: [
         {
-            id: 'aeroflex-sculpt',
-            name: 'AeroFlex Ultra-Sculpt Leggings',
+            id: 'everyday-classic',
+            name: 'Gymshark Everyday Simple Cut',
             activeHomepage: true,
-            description: 'Engineered with our signature AeroCompress™ thread. The AeroFlex Ultra-Sculpt Leggings offer 100% squat-proof coverage, active moisture wicking, and an ultra-high waistband that stays put.',
-            price: 5900, // 5,900 DA
-            originalPrice: 8500, // 8,500 DA
+            description: 'Built for your most intense leg days. Squat, lunge, and lift with absolute confidence. Our simple cut leggings lock in your form with a compression fit that moves perfectly with your body. Engineered with our targeted pushup contouring and a defining scrunch butt design, these leggings enhance your natural shape while providing zero-distraction support on the gym floor.',
+            price: 5900,
+            originalPrice: 8500,
             image: 'assets/hero_leggings.jpg',
             images: [
                 'assets/hero_leggings.jpg',
                 'assets/fabric_detail.jpg',
                 'assets/lifestyle_leggings.jpg'
             ],
-            colors: ['Midnight Black', 'Teal Breeze', 'Electric Orchid'],
+            colors: ['Timeless Black', 'Earthy Brown', 'Cosmic Purple'],
+            sizes: ['XS', 'S', 'M', 'L', 'XL']
+        },
+        {
+            id: 'signature-flared',
+            name: 'Gymshark Signature Flared Cut',
+            activeHomepage: false,
+            description: 'Bring elegance to the weight room. Femininity doesn\'t stop when your workout begins. The flared cut offers a beautifully relaxed drape from the knee down, perfect for upper-body days or studio sessions. You still get the exact same sculpting benefits—the waist-snatching V-cross front, the lifting pushup effect, and the shaping scrunch butt—but with a flowing aesthetic that elongates the legs.',
+            price: 6500,
+            originalPrice: 9000,
+            image: 'assets/lifestyle_leggings.jpg',
+            images: [
+                'assets/lifestyle_leggings.jpg',
+                'assets/fabric_detail.jpg',
+                'assets/hero_leggings.jpg'
+            ],
+            colors: ['Timeless Black', 'Earthy Brown', 'Cosmic Purple'],
             sizes: ['XS', 'S', 'M', 'L', 'XL']
         }
     ],
     // Mapping of "productId:color:size" -> stock count
     stock: {
-        'aeroflex-sculpt:Midnight Black:XS': 5,
-        'aeroflex-sculpt:Midnight Black:S': 8,
-        'aeroflex-sculpt:Midnight Black:M': 12,
-        'aeroflex-sculpt:Midnight Black:L': 0, // Out of Stock demo
-        'aeroflex-sculpt:Midnight Black:XL': 4,
-        'aeroflex-sculpt:Teal Breeze:XS': 3,
-        'aeroflex-sculpt:Teal Breeze:S': 6,
-        'aeroflex-sculpt:Teal Breeze:M': 2, // Exactly 2 items for testing "minus one" example
-        'aeroflex-sculpt:Teal Breeze:L': 1, // Low stock demo
-        'aeroflex-sculpt:Teal Breeze:XL': 3,
-        'aeroflex-sculpt:Electric Orchid:XS': 2,
-        'aeroflex-sculpt:Electric Orchid:S': 4,
-        'aeroflex-sculpt:Electric Orchid:M': 5,
-        'aeroflex-sculpt:Electric Orchid:L': 3,
-        'aeroflex-sculpt:Electric Orchid:XL': 2
+        'everyday-classic:Timeless Black:XS': 10,
+        'everyday-classic:Timeless Black:S': 15,
+        'everyday-classic:Timeless Black:M': 20,
+        'everyday-classic:Timeless Black:L': 10,
+        'everyday-classic:Timeless Black:XL': 5,
+        'everyday-classic:Earthy Brown:XS': 8,
+        'everyday-classic:Earthy Brown:S': 12,
+        'everyday-classic:Earthy Brown:M': 15,
+        'everyday-classic:Earthy Brown:L': 8,
+        'everyday-classic:Earthy Brown:XL': 4,
+        'everyday-classic:Cosmic Purple:XS': 5,
+        'everyday-classic:Cosmic Purple:S': 8,
+        'everyday-classic:Cosmic Purple:M': 10,
+        'everyday-classic:Cosmic Purple:L': 5,
+        'everyday-classic:Cosmic Purple:XL': 3,
+        
+        'signature-flared:Timeless Black:XS': 5,
+        'signature-flared:Timeless Black:S': 8,
+        'signature-flared:Timeless Black:M': 12,
+        'signature-flared:Timeless Black:L': 6,
+        'signature-flared:Timeless Black:XL': 3,
+        'signature-flared:Earthy Brown:XS': 6,
+        'signature-flared:Earthy Brown:S': 10,
+        'signature-flared:Earthy Brown:M': 15,
+        'signature-flared:Earthy Brown:L': 8,
+        'signature-flared:Earthy Brown:XL': 4,
+        'signature-flared:Cosmic Purple:XS': 4,
+        'signature-flared:Cosmic Purple:S': 6,
+        'signature-flared:Cosmic Purple:M': 8,
+        'signature-flared:Cosmic Purple:L': 4,
+        'signature-flared:Cosmic Purple:XL': 2
     },
     promoCodes: [
         { code: 'WELCOME10', discount: 10, active: true },
@@ -299,8 +331,9 @@ function sanitizeDb(parsed) {
         needsSave = true;
     }
     
-    if (!parsed.products || !Array.isArray(parsed.products)) {
+    if (!parsed.products || !Array.isArray(parsed.products) || parsed.products.some(p => p.id === 'aeroflex-sculpt' || p.colors.includes('Earthy Olive') || p.name === 'The Everyday Classic Cut')) {
         parsed.products = DEFAULT_DB.products;
+        parsed.stock = DEFAULT_DB.stock;
         needsSave = true;
     }
     
@@ -395,7 +428,7 @@ function saveDb(db) {
 
 // --- STATE MANAGEMENT ---
 let storeState = {
-    selectedProductId: 'aeroflex-sculpt',
+    selectedProductId: 'everyday-classic',
     selectedColor: 'Midnight Black',
     selectedSize: 'M',
     appliedPromo: null,
@@ -939,6 +972,39 @@ function initPublicPage() {
     document.getElementById('success-modal-close-btn').addEventListener('click', () => {
         document.getElementById('order-success-modal').classList.add('hidden');
     });
+
+    // Select Product from Spotlight Section
+    document.querySelectorAll('.select-spotlight-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            const db = getDb();
+            const product = db.products.find(p => p.id === id);
+            if (product) {
+                storeState.selectedProductId = id;
+                storeState.selectedColor = product.colors[0] || '';
+                storeState.selectedSize = product.sizes[0] || 'M';
+                renderPublicStore();
+                document.getElementById('product-purchase').scrollIntoView({ behavior: 'smooth' });
+                showToast(`Selected ${product.name}`, 'info');
+            }
+        });
+    });
+
+    // Style switcher button clicks inside the order form
+    document.querySelectorAll('.style-switch-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            const db = getDb();
+            const product = db.products.find(p => p.id === id);
+            if (product) {
+                storeState.selectedProductId = id;
+                storeState.selectedColor = product.colors[0] || '';
+                storeState.selectedSize = product.sizes[0] || 'M';
+                renderPublicStore();
+                showToast(`Selected ${product.name}`, 'info');
+            }
+        });
+    });
 }
 
 function renderPublicStore() {
@@ -946,6 +1012,33 @@ function renderPublicStore() {
     const product = db.products.find(p => p.id === storeState.selectedProductId);
     
     if (!product) return;
+    
+    // Update Style Cut Switcher buttons visual state
+    const btnClassic = document.getElementById('style-btn-classic');
+    const btnFlared = document.getElementById('style-btn-flared');
+    if (btnClassic && btnFlared) {
+        if (storeState.selectedProductId === 'everyday-classic') {
+            btnClassic.classList.add('active');
+            btnClassic.style.border = '1px solid var(--primary)';
+            btnClassic.style.background = 'rgba(220,164,150,0.1)';
+            btnClassic.style.color = 'var(--primary)';
+            
+            btnFlared.classList.remove('active');
+            btnFlared.style.border = '1px solid var(--border)';
+            btnFlared.style.background = 'none';
+            btnFlared.style.color = 'var(--text-secondary)';
+        } else {
+            btnFlared.classList.add('active');
+            btnFlared.style.border = '1px solid var(--primary)';
+            btnFlared.style.background = 'rgba(220,164,150,0.1)';
+            btnFlared.style.color = 'var(--primary)';
+            
+            btnClassic.classList.remove('active');
+            btnClassic.style.border = '1px solid var(--border)';
+            btnClassic.style.background = 'none';
+            btnClassic.style.color = 'var(--text-secondary)';
+        }
+    }
     
     // Render dynamic carousel slideshow
     renderCarousel(product);
@@ -1065,11 +1158,10 @@ function updatePriceCalculation(basePrice) {
     if (shippingDisplay) {
         if (shippingFee === 0) {
             shippingDisplay.textContent = 'FREE';
-            shippingDisplay.className = 'text-green';
         } else {
-            shippingDisplay.textContent = `+${shippingFee.toLocaleString()} DA`;
-            shippingDisplay.className = '';
+            shippingDisplay.textContent = `${shippingFee.toLocaleString()} DA`;
         }
+        shippingDisplay.className = 'text-green';
     }
     
     // 3. Calculate grand total
