@@ -575,6 +575,13 @@
 
                         <div class="admin-card glass-card" style="padding: 20px; text-align: center; position: relative;">
                             <div class="neon-glow-line" style="background: var(--yellow);"></div>
+                            <div style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">Pending In-Transit Value</div>
+                            <h2 id="finance-pending-revenue" style="color: var(--yellow); font-family: var(--font-heading); font-size: 1.8rem; margin: 0;">0 DA</h2>
+                            <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; margin-bottom: 0;">Pending / Shipped (Not Ready)</p>
+                        </div>
+
+                        <div class="admin-card glass-card" style="padding: 20px; text-align: center; position: relative;">
+                            <div class="neon-glow-line" style="background: var(--cyan);"></div>
                             <div style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">Shipping Fees Collected</div>
                             <h2 id="finance-shipping-collected" style="color: var(--text-primary); font-family: var(--font-heading); font-size: 1.8rem; margin: 0;">0 DA</h2>
                             <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; margin-bottom: 0;">Delivered shipping fees</p>
@@ -618,6 +625,30 @@
                                     </tr>
                                 </thead>
                                 <tbody id="admin-finance-table-body">
+                                    <!-- Dynamic Rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- In-Transit / Non-Delivered Orders Ledger (Not Ready Money) -->
+                    <div class="admin-card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <h3>In-Transit & Pending Orders Ledger (Not Ready Money)</h3>
+                            <p>Estimated revenue currently in transit (status: Pending or Shipped).</p>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="admin-table">
+                                <thead>
+                                    <tr>
+                                        <th>Order ID</th>
+                                        <th>Customer</th>
+                                        <th>Product Variant</th>
+                                        <th>Fulfillment Status</th>
+                                        <th>Estimated Value</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-finance-pending-table-body">
                                     <!-- Dynamic Rows -->
                                 </tbody>
                             </table>

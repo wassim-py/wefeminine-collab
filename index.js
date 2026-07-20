@@ -1806,6 +1806,29 @@ function updateOrderStatus(orderId, newStatus) {
     const db = getDb();
     const order = db.orders.find(o => o.id === orderId);
     if (order) {
+        const oldStatus = order.status || 'Pending';
+        
+        // Return to stock if cancelled
+        if (oldStatus !== 'Cancelled' && newStatus === 'Cancelled') {
+            const variantKey = `${order.productId}:${order.color}:${order.size}`;
+            if (db.stock[variantKey] !== undefined) {
+                db.stock[variantKey] += 1;
+            } else {
+                db.stock[variantKey] = 1;
+            }
+            showToast(`Returned 1 item of ${order.color} (Size ${order.size}) back to stock.`, 'info');
+        }
+        // Deduct from stock if uncancelled
+        else if (oldStatus === 'Cancelled' && newStatus !== 'Cancelled') {
+            const variantKey = `${order.productId}:${order.color}:${order.size}`;
+            if (db.stock[variantKey] !== undefined) {
+                db.stock[variantKey] = Math.max(0, db.stock[variantKey] - 1);
+            } else {
+                db.stock[variantKey] = 0;
+            }
+            showToast(`Deducted 1 item of ${order.color} (Size ${order.size}) from stock.`, 'info');
+        }
+        
         order.status = newStatus;
         saveDb(db);
         showToast(`Order ${orderId} status set to: ${newStatus}`, 'success');
@@ -2146,6 +2169,7 @@ function renderAdminFinanceDashboard(db) {
     // 1. Calculate KPI Metrics
     let grossRevenue = 0;
     let netRevenue = 0;
+    let pendingRevenue = 0;
     let shippingCollected = 0;
     let collabCommissions = 0;
     
@@ -2160,6 +2184,8 @@ function renderAdminFinanceDashboard(db) {
             netRevenue += orderPrice;
             shippingCollected += shipPrice;
             collabCommissions += comm;
+        } else if (order.status === 'Pending' || order.status === 'Shipped') {
+            pendingRevenue += orderPrice;
         }
     });
     
@@ -2167,80 +2193,116 @@ function renderAdminFinanceDashboard(db) {
     
     const elGross = document.getElementById('finance-gross-revenue');
     const elNet = document.getElementById('finance-net-revenue');
+    const elPending = document.getElementById('finance-pending-revenue');
     const elShip = document.getElementById('finance-shipping-collected');
     const elCollab = document.getElementById('finance-collab-commissions');
     const elProfit = document.getElementById('finance-net-profit');
     
     if (elGross) elGross.textContent = `${grossRevenue.toLocaleString()} DA`;
     if (elNet) elNet.textContent = `${netRevenue.toLocaleString()} DA`;
+    if (elPending) elPending.textContent = `${pendingRevenue.toLocaleString()} DA`;
     if (elShip) elShip.textContent = `${shippingCollected.toLocaleString()} DA`;
     if (elCollab) elCollab.textContent = `${collabCommissions.toLocaleString()} DA`;
     if (elProfit) elProfit.textContent = `${netProfit.toLocaleString()} DA`;
     
     // 2. Collaborators Commission Ledger Table
     const body = document.getElementById('admin-finance-table-body');
-    if (!body) return;
-    body.innerHTML = '';
-    
-    const collabGroups = {};
-    
-    // Pre-populate with registered collaborator codes
-    db.promoCodes.forEach(p => {
-        if (p.type === 'collaborator') {
-            collabGroups[p.code] = {
-                code: p.code,
-                deliveredCount: 0,
-                commissionPerUnit: p.commission || 0,
-                totalSalesValue: 0,
-                totalCommissionOwed: 0
-            };
-        }
-    });
-    
-    // Group from orders database
-    db.orders.forEach(order => {
-        if (order.promoCode && order.status === 'Delivered') {
-            const isCollab = order.promoType === 'collaborator';
-            if (isCollab) {
-                const code = order.promoCode;
-                const comm = order.collaboratorCommission || 0;
-                const orderPrice = order.price || 0;
-                
-                if (!collabGroups[code]) {
-                    collabGroups[code] = {
-                        code: code,
-                        deliveredCount: 0,
-                        commissionPerUnit: comm,
-                        totalSalesValue: 0,
-                        totalCommissionOwed: 0
-                    };
-                }
-                
-                collabGroups[code].deliveredCount += 1;
-                collabGroups[code].totalSalesValue += orderPrice;
-                collabGroups[code].totalCommissionOwed += comm;
+    if (body) {
+        body.innerHTML = '';
+        
+        const collabGroups = {};
+        
+        // Pre-populate with registered collaborator codes
+        db.promoCodes.forEach(p => {
+            if (p.type === 'collaborator') {
+                collabGroups[p.code] = {
+                    code: p.code,
+                    deliveredCount: 0,
+                    commissionPerUnit: p.commission || 0,
+                    totalSalesValue: 0,
+                    totalCommissionOwed: 0
+                };
             }
+        });
+        
+        // Group from orders database
+        db.orders.forEach(order => {
+            if (order.promoCode && order.status === 'Delivered') {
+                const isCollab = order.promoType === 'collaborator';
+                if (isCollab) {
+                    const code = order.promoCode;
+                    const comm = order.collaboratorCommission || 0;
+                    const orderPrice = order.price || 0;
+                    
+                    if (!collabGroups[code]) {
+                        collabGroups[code] = {
+                            code: code,
+                            deliveredCount: 0,
+                            commissionPerUnit: comm,
+                            totalSalesValue: 0,
+                            totalCommissionOwed: 0
+                        };
+                    }
+                    
+                    collabGroups[code].deliveredCount += 1;
+                    collabGroups[code].totalSalesValue += orderPrice;
+                    collabGroups[code].totalCommissionOwed += comm;
+                }
+            }
+        });
+        
+        const collabList = Object.values(collabGroups);
+        
+        if (collabList.length === 0) {
+            body.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">No collaborator codes registered or used yet.</td></tr>`;
+        } else {
+            collabList.forEach(collab => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong style="font-family:monospace; font-size:1.05rem;">${collab.code}</strong></td>
+                    <td><strong>${collab.deliveredCount}</strong></td>
+                    <td>${collab.commissionPerUnit.toLocaleString()} DA</td>
+                    <td>${collab.totalSalesValue.toLocaleString()} DA</td>
+                    <td><strong class="text-green">${collab.totalCommissionOwed.toLocaleString()} DA</strong></td>
+                `;
+                body.appendChild(tr);
+            });
         }
-    });
-    
-    const collabList = Object.values(collabGroups);
-    
-    if (collabList.length === 0) {
-        body.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">No collaborator codes registered or used yet.</td></tr>`;
-        return;
     }
     
-    collabList.forEach(collab => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td><strong style="font-family:monospace; font-size:1.05rem;">${collab.code}</strong></td>
-            <td><strong>${collab.deliveredCount}</strong></td>
-            <td>${collab.commissionPerUnit.toLocaleString()} DA</td>
-            <td>${collab.totalSalesValue.toLocaleString()} DA</td>
-            <td><strong class="text-green">${collab.totalCommissionOwed.toLocaleString()} DA</strong></td>
-        `;
-        body.appendChild(tr);
-    });
+    // 3. Pending/In-Transit Orders Table (Not Ready Money Ledger)
+    const pendingBody = document.getElementById('admin-finance-pending-table-body');
+    if (pendingBody) {
+        pendingBody.innerHTML = '';
+        
+        const pendingOrders = db.orders.filter(o => o.status === 'Pending' || o.status === 'Shipped');
+        
+        if (pendingOrders.length === 0) {
+            pendingBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">No orders currently in transit or pending. All revenue is resolved.</td></tr>`;
+            return;
+        }
+        
+        pendingOrders.forEach(order => {
+            const tr = document.createElement('tr');
+            const orderDate = order.date ? new Date(order.date).toLocaleDateString() : 'N/A';
+            let statusClass = (order.status || 'Pending').toLowerCase();
+            
+            tr.innerHTML = `
+                <td><strong>${order.id}</strong><br><span style="font-size:0.75rem; color:var(--text-muted);">${orderDate}</span></td>
+                <td>
+                    <div><strong>${order.customerName}</strong></div>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">${order.customerPhone}</div>
+                </td>
+                <td>
+                    <div>${order.productName}</div>
+                    <span class="color-tag">${order.color}</span> <span class="color-tag" style="background:rgba(124,58,237,0.15)">${order.size}</span>
+                </td>
+                <td><span class="badge-status ${statusClass}">${order.status}</span></td>
+                <td><strong>${(order.price || 0).toLocaleString()} DA</strong></td>
+            `;
+            pendingBody.appendChild(tr);
+        });
+    }
 }
 
 function exportFinanceCsv() {
@@ -2421,9 +2483,24 @@ function deleteOrder(orderId) {
         `Are you sure you want to permanently delete order "${orderId}"?`,
         () => {
             const db = getDb();
-            db.orders = db.orders.filter(o => o.id !== orderId);
-            saveDb(db);
-            showToast(`Order ${orderId} deleted successfully.`, 'info');
+            const order = db.orders.find(o => o.id === orderId);
+            
+            if (order) {
+                const isCancelled = order.status === 'Cancelled';
+                // If it was NOT cancelled, return stock back
+                if (!isCancelled) {
+                    const variantKey = `${order.productId}:${order.color}:${order.size}`;
+                    if (db.stock[variantKey] !== undefined) {
+                        db.stock[variantKey] += 1;
+                    } else {
+                        db.stock[variantKey] = 1;
+                    }
+                }
+                
+                db.orders = db.orders.filter(o => o.id !== orderId);
+                saveDb(db);
+                showToast(`Order ${orderId} deleted successfully.${isCancelled ? '' : ' Stock returned back.'}`, 'info');
+            }
         }
     );
 }
