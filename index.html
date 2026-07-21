@@ -100,28 +100,8 @@
                         <h2 class="section-title">Engineered to Lift. Designed to Flatter.</h2>
                     </div>
                     
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 40px; margin-bottom: 20px;">
-                        <!-- Product 1 Card -->
-                        <div class="glass-card scroll-reveal" style="padding: 32px; border-radius: var(--radius-lg); display: flex; flex-direction: column; justify-content: space-between; border: 1px solid var(--border); background: #fff; box-shadow: var(--shadow-sm); transition: transform 0.3s ease;">
-                            <div>
-                                <img src="assets/hero_leggings.jpg" alt="Gymshark Everyday Simple Cut" style="width: 100%; height: 320px; object-fit: cover; border-radius: var(--radius); margin-bottom: 24px; border: 1px solid var(--border);">
-                                <h3 style="font-family: var(--font-heading); font-size: 1.35rem; margin-bottom: 8px; color: var(--text-primary);">Gymshark Everyday Simple Cut</h3>
-                                <p style="font-weight: 600; color: var(--primary); font-size: 0.9rem; margin-bottom: 16px; font-family: var(--font-body);">Built for your most intense leg days.</p>
-                                <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">Squat, lunge, and lift with absolute confidence. Our simple cut leggings lock in your form with a compression fit that moves perfectly with your body. Engineered with our targeted pushup contouring and a defining scrunch butt design, these leggings enhance your natural shape while providing zero-distraction support on the gym floor.</p>
-                            </div>
-                            <button type="button" class="btn btn-primary btn-block select-spotlight-btn" data-id="everyday-classic" style="margin-top: auto;">Select Simple Cut</button>
-                        </div>
-                        
-                        <!-- Product 2 Card -->
-                        <div class="glass-card scroll-reveal" style="padding: 32px; border-radius: var(--radius-lg); display: flex; flex-direction: column; justify-content: space-between; border: 1px solid var(--border); background: #fff; box-shadow: var(--shadow-sm); transition: transform 0.3s ease;">
-                            <div>
-                                <img src="assets/lifestyle_leggings.jpg" alt="Gymshark Signature Flared Cut" style="width: 100%; height: 320px; object-fit: cover; border-radius: var(--radius); margin-bottom: 24px; border: 1px solid var(--border);">
-                                <h3 style="font-family: var(--font-heading); font-size: 1.35rem; margin-bottom: 8px; color: var(--text-primary);">Gymshark Signature Flared Cut</h3>
-                                <p style="font-weight: 600; color: var(--primary); font-size: 0.9rem; margin-bottom: 16px; font-family: var(--font-body);">Bring elegance to the weight room.</p>
-                                <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">Femininity doesn't stop when your workout begins. The flared cut offers a beautifully relaxed drape from the knee down, perfect for upper-body days or studio sessions. You still get the exact same sculpting benefits—the waist-snatching V-cross front, the lifting pushup effect, and the shaping scrunch butt—but with a flowing aesthetic that elongates the legs.</p>
-                            </div>
-                            <button type="button" class="btn btn-primary btn-block select-spotlight-btn" data-id="signature-flared" style="margin-top: auto;">Select Flared Cut</button>
-                        </div>
+                    <div id="spotlight-products-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 40px; margin-bottom: 20px;">
+                        <!-- Dynamic Product Spotlight Cards -->
                     </div>
                 </div>
             </section>
@@ -191,17 +171,6 @@
                 </div>
             </section>
 
-            <!-- Section 4: The Gymshark Vision -->
-            <section id="brand-story" class="brand-story" style="padding: 100px 0; background: #faf8f7; text-align: center; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
-                <div class="container" style="max-width: 800px; margin: 0 auto;">
-                    <div class="badge" style="margin-bottom: 24px;">The Gymshark Vision</div>
-                    <h2 class="section-title" style="margin-bottom: 24px; font-family: var(--font-display); font-size: 2.2rem; font-weight: 700;">Redefining Gym Wear Through a Feminine Lens</h2>
-                    <p style="font-size: 1.05rem; color: var(--text-secondary); line-height: 1.8; font-family: var(--font-body); font-style: italic; max-width: 720px; margin: 0 auto;">
-                        "We believe your workout gear should make you feel powerful and unapologetically feminine. This Gymshark collection bridges the gap between hardcore gym performance and true aesthetic beauty. We are designing for the woman who wants to lift heavy, embrace her form, and build her best self without ever compromising on her feminine energy."
-                    </p>
-                </div>
-            </section>
-
             <!-- Product Showcase / Purchase Section -->
             <section id="product-purchase" class="product-purchase">
                 <div class="container purchase-container">
@@ -253,11 +222,10 @@
                         <hr class="divider">
 
                         <!-- Style Cut Toggle Switcher -->
-                        <div class="selector-group" style="margin-bottom: 24px;">
+                        <div class="selector-group" id="style-cut-switcher-group" style="margin-bottom: 24px;">
                             <label class="selector-label">Style Cut:</label>
-                            <div style="display: flex; gap: 10px; margin-top: 8px;">
-                                <button type="button" class="btn style-switch-btn active" id="style-btn-classic" data-id="everyday-classic" style="flex: 1; padding: 10px; font-size: 0.85rem; font-weight: 600; border-radius: var(--radius-sm); border: 1px solid var(--primary); background: rgba(220,164,150,0.1); color: var(--primary);">Everyday Classic</button>
-                                <button type="button" class="btn style-switch-btn" id="style-btn-flared" data-id="signature-flared" style="flex: 1; padding: 10px; font-size: 0.85rem; font-weight: 600; border-radius: var(--radius-sm); border: 1px solid var(--border); background: none; color: var(--text-secondary);">Signature Flared</button>
+                            <div id="style-cut-buttons-container" style="display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap;">
+                                <!-- Dynamic Product Switcher Buttons -->
                             </div>
                         </div>
 
@@ -366,6 +334,17 @@
                             </button>
                         </form>
                     </div>
+                </div>
+            </section>
+
+            <!-- Section 4: The WE FEMININE Vision -->
+            <section id="brand-story" class="brand-story" style="padding: 100px 0; background: #faf8f7; text-align: center; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                <div class="container" style="max-width: 800px; margin: 0 auto;">
+                    <div class="badge" style="margin-bottom: 24px;">The WE FEMININE Vision</div>
+                    <h2 class="section-title" style="margin-bottom: 24px; font-family: var(--font-display); font-size: 2.2rem; font-weight: 700;">Redefining Gym Wear Through a Feminine Lens</h2>
+                    <p style="font-size: 1.05rem; color: var(--text-secondary); line-height: 1.8; font-family: var(--font-body); font-style: italic; max-width: 720px; margin: 0 auto;">
+                        "We believe your workout gear should make you feel powerful and unapologetically feminine. This WE FEMININE collection bridges the gap between hardcore gym performance and true aesthetic beauty. We are designing for the woman who wants to lift heavy, embrace her form, and build her best self without ever compromising on her feminine energy."
+                    </p>
                 </div>
             </section>
 

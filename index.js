@@ -1021,31 +1021,65 @@ function renderPublicStore() {
     
     if (!product) return;
     
-    // Update Style Cut Switcher buttons visual state
-    const btnClassic = document.getElementById('style-btn-classic');
-    const btnFlared = document.getElementById('style-btn-flared');
-    if (btnClassic && btnFlared) {
-        if (storeState.selectedProductId === 'everyday-classic') {
-            btnClassic.classList.add('active');
-            btnClassic.style.border = '1px solid var(--primary)';
-            btnClassic.style.background = 'rgba(220,164,150,0.1)';
-            btnClassic.style.color = 'var(--primary)';
-            
-            btnFlared.classList.remove('active');
-            btnFlared.style.border = '1px solid var(--border)';
-            btnFlared.style.background = 'none';
-            btnFlared.style.color = 'var(--text-secondary)';
+    // 1. Render Dynamic Style Cut Switcher in Order Form
+    const switcherContainer = document.getElementById('style-cut-buttons-container');
+    const switcherGroup = document.getElementById('style-cut-switcher-group');
+    if (switcherContainer && switcherGroup) {
+        if (db.products.length <= 1) {
+            switcherGroup.style.display = 'none';
         } else {
-            btnFlared.classList.add('active');
-            btnFlared.style.border = '1px solid var(--primary)';
-            btnFlared.style.background = 'rgba(220,164,150,0.1)';
-            btnFlared.style.color = 'var(--primary)';
-            
-            btnClassic.classList.remove('active');
-            btnClassic.style.border = '1px solid var(--border)';
-            btnClassic.style.background = 'none';
-            btnClassic.style.color = 'var(--text-secondary)';
+            switcherGroup.style.display = 'block';
+            switcherContainer.innerHTML = '';
+            db.products.forEach(p => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                const isActive = p.id === storeState.selectedProductId;
+                btn.className = `btn style-switch-btn ${isActive ? 'active' : ''}`;
+                btn.style.cssText = `flex: 1; min-width: 120px; padding: 10px; font-size: 0.85rem; font-weight: 600; border-radius: var(--radius-sm); transition: all 0.2s ease; ${
+                    isActive 
+                    ? 'border: 1px solid var(--primary); background: rgba(220,164,150,0.1); color: var(--primary);' 
+                    : 'border: 1px solid var(--border); background: none; color: var(--text-secondary);'
+                }`;
+                btn.textContent = p.name;
+                btn.addEventListener('click', () => {
+                    storeState.selectedProductId = p.id;
+                    storeState.selectedColor = p.colors[0] || '';
+                    storeState.selectedSize = p.sizes[0] || 'M';
+                    renderPublicStore();
+                    showToast(`Selected ${p.name}`, 'info');
+                });
+                switcherContainer.appendChild(btn);
+            });
         }
+    }
+
+    // 2. Render Dynamic Product Spotlight Section (Section 2)
+    const spotlightContainer = document.getElementById('spotlight-products-container');
+    if (spotlightContainer) {
+        spotlightContainer.innerHTML = '';
+        db.products.forEach(p => {
+            const card = document.createElement('div');
+            card.className = 'glass-card scroll-reveal reveal-visible';
+            card.style.cssText = 'padding: 32px; border-radius: var(--radius-lg); display: flex; flex-direction: column; justify-content: space-between; border: 1px solid var(--border); background: #fff; box-shadow: var(--shadow-sm); transition: transform 0.3s ease;';
+            card.innerHTML = `
+                <div>
+                    <img src="${p.image || 'assets/hero_leggings.jpg'}" alt="${p.name}" style="width: 100%; height: 320px; object-fit: cover; border-radius: var(--radius); margin-bottom: 24px; border: 1px solid var(--border);">
+                    <h3 style="font-family: var(--font-heading); font-size: 1.35rem; margin-bottom: 8px; color: var(--text-primary);">${p.name}</h3>
+                    <p style="font-weight: 600; color: var(--primary); font-size: 0.9rem; margin-bottom: 16px; font-family: var(--font-body);">${p.price ? p.price.toLocaleString() + ' DA' : ''}</p>
+                    <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">${p.description || ''}</p>
+                </div>
+                <button type="button" class="btn btn-primary btn-block select-spotlight-btn" style="margin-top: auto;">Select ${p.name}</button>
+            `;
+            card.querySelector('.select-spotlight-btn').addEventListener('click', () => {
+                storeState.selectedProductId = p.id;
+                storeState.selectedColor = p.colors[0] || '';
+                storeState.selectedSize = p.sizes[0] || 'M';
+                renderPublicStore();
+                document.getElementById('product-purchase').scrollIntoView({ behavior: 'smooth' });
+                showToast(`Selected ${p.name}`, 'info');
+            });
+            spotlightContainer.appendChild(card);
+        });
     }
     
     // Render dynamic carousel slideshow
