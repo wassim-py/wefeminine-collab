@@ -1061,23 +1061,39 @@ function renderPublicStore() {
             const card = document.createElement('div');
             card.className = 'glass-card scroll-reveal reveal-visible';
             card.style.cssText = 'padding: 32px; border-radius: var(--radius-lg); display: flex; flex-direction: column; justify-content: space-between; border: 1px solid var(--border); background: #fff; box-shadow: var(--shadow-sm); transition: transform 0.3s ease;';
+            
+            const rawDesc = p.description || '';
+            const isLong = rawDesc.length > 110;
+            const shortDesc = isLong ? rawDesc.substring(0, 110).trim() + '...' : rawDesc;
+
             card.innerHTML = `
                 <div>
-                    <img src="${p.image || 'assets/hero_leggings.jpg'}" alt="${p.name}" style="width: 100%; height: 320px; object-fit: cover; border-radius: var(--radius); margin-bottom: 24px; border: 1px solid var(--border);">
+                    <img src="${p.image || 'assets/hero_leggings.jpg'}" alt="${p.name}" style="width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: var(--radius); margin-bottom: 24px; border: 1px solid var(--border);">
                     <h3 style="font-family: var(--font-heading); font-size: 1.35rem; margin-bottom: 8px; color: var(--text-primary);">${p.name}</h3>
                     <p style="font-weight: 600; color: var(--primary); font-size: 0.9rem; margin-bottom: 16px; font-family: var(--font-body);">${p.price ? p.price.toLocaleString() + ' DA' : ''}</p>
-                    <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">${p.description || ''}</p>
+                    <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">
+                        ${shortDesc}
+                        ${isLong ? '<button type="button" class="read-more-btn" style="background:none; border:none; color:var(--primary); font-weight:600; cursor:pointer; text-decoration:underline; padding:0; font-size:0.85rem; margin-left:4px;">Read More...</button>' : ''}
+                    </p>
                 </div>
                 <button type="button" class="btn btn-primary btn-block select-spotlight-btn" style="margin-top: auto;">Select ${p.name}</button>
             `;
-            card.querySelector('.select-spotlight-btn').addEventListener('click', () => {
+            
+            const handleSelectAndScroll = () => {
                 storeState.selectedProductId = p.id;
                 storeState.selectedColor = p.colors[0] || '';
                 storeState.selectedSize = p.sizes[0] || 'M';
                 renderPublicStore();
                 document.getElementById('product-purchase').scrollIntoView({ behavior: 'smooth' });
                 showToast(`Selected ${p.name}`, 'info');
-            });
+            };
+
+            card.querySelector('.select-spotlight-btn').addEventListener('click', handleSelectAndScroll);
+            const readMoreBtn = card.querySelector('.read-more-btn');
+            if (readMoreBtn) {
+                readMoreBtn.addEventListener('click', handleSelectAndScroll);
+            }
+
             spotlightContainer.appendChild(card);
         });
     }
