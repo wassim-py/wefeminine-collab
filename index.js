@@ -46,11 +46,11 @@ const DEFAULT_DB = {
             description: 'Built for your most intense leg days. Squat, lunge, and lift with absolute confidence. Our simple cut leggings lock in your form with a compression fit that moves perfectly with your body. Engineered with our targeted pushup contouring and a defining scrunch butt design, these leggings enhance your natural shape while providing zero-distraction support on the gym floor.',
             price: 5900,
             originalPrice: 8500,
-            image: 'assets/hero_leggings.jpg',
+            image: 'assets/simple_leggings.jpg',
             images: [
-                'assets/hero_leggings.jpg',
+                'assets/simple_leggings.jpg',
                 'assets/fabric_detail.jpg',
-                'assets/lifestyle_leggings.jpg'
+                'assets/flared_leggings.jpg'
             ],
             colors: ['Timeless Black', 'Earthy Brown', 'Cosmic Purple'],
             sizes: ['XS', 'S', 'M', 'L', 'XL']
@@ -62,11 +62,11 @@ const DEFAULT_DB = {
             description: 'Bring elegance to the weight room. Femininity doesn\'t stop when your workout begins. The flared cut offers a beautifully relaxed drape from the knee down, perfect for upper-body days or studio sessions. You still get the exact same sculpting benefits—the waist-snatching V-cross front, the lifting pushup effect, and the shaping scrunch butt—but with a flowing aesthetic that elongates the legs.',
             price: 6500,
             originalPrice: 9000,
-            image: 'assets/lifestyle_leggings.jpg',
+            image: 'assets/flared_leggings.jpg',
             images: [
-                'assets/lifestyle_leggings.jpg',
+                'assets/flared_leggings.jpg',
                 'assets/fabric_detail.jpg',
-                'assets/hero_leggings.jpg'
+                'assets/simple_leggings.jpg'
             ],
             colors: ['Timeless Black', 'Earthy Brown', 'Cosmic Purple'],
             sizes: ['XS', 'S', 'M', 'L', 'XL']
@@ -339,7 +339,7 @@ function sanitizeDb(parsed) {
     
     parsed.products.forEach(p => {
         if (!p.images || !Array.isArray(p.images)) {
-            p.images = p.image ? [p.image] : ['assets/hero_leggings.jpg'];
+            p.images = p.image ? [p.image] : ['assets/simple_leggings.jpg'];
             needsSave = true;
         }
     });
@@ -1061,14 +1061,21 @@ function renderPublicStore() {
             const card = document.createElement('div');
             card.className = 'glass-card scroll-reveal reveal-visible';
             card.style.cssText = 'padding: 32px; border-radius: var(--radius-lg); display: flex; flex-direction: column; justify-content: space-between; border: 1px solid var(--border); background: #fff; box-shadow: var(--shadow-sm); transition: transform 0.3s ease;';
-            
             const rawDesc = p.description || '';
             const isLong = rawDesc.length > 110;
             const shortDesc = isLong ? rawDesc.substring(0, 110).trim() + '...' : rawDesc;
 
+            const lowerName = (p.name || '').toLowerCase();
+            let staticCardImg = p.image || 'assets/simple_leggings.jpg';
+            if (p.id === 'everyday-classic' || lowerName.includes('simple') || lowerName.includes('classic')) {
+                staticCardImg = 'assets/simple_leggings.jpg';
+            } else if (p.id === 'signature-flared' || lowerName.includes('flared')) {
+                staticCardImg = 'assets/flared_leggings.jpg';
+            }
+
             card.innerHTML = `
                 <div>
-                    <img src="${p.image || 'assets/hero_leggings.jpg'}" alt="${p.name}" style="width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: var(--radius); margin-bottom: 24px; border: 1px solid var(--border);">
+                    <img src="${staticCardImg}" alt="${p.name}" style="width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: var(--radius); margin-bottom: 24px; border: 1px solid var(--border);">
                     <h3 style="font-family: var(--font-heading); font-size: 1.35rem; margin-bottom: 8px; color: var(--text-primary);">${p.name}</h3>
                     <p style="font-weight: 600; color: var(--primary); font-size: 0.9rem; margin-bottom: 16px; font-family: var(--font-body);">${p.price ? p.price.toLocaleString() + ' DA' : ''}</p>
                     <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">
