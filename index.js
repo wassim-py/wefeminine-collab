@@ -1009,7 +1009,15 @@ function initPublicPage() {
 
 function renderPublicStore() {
     const db = getDb();
-    const product = db.products.find(p => p.id === storeState.selectedProductId);
+    let product = db.products.find(p => p.id === storeState.selectedProductId);
+    
+    if (!product && db.products.length > 0) {
+        const activeHomepageProd = db.products.find(p => p.activeHomepage);
+        product = activeHomepageProd || db.products[0];
+        storeState.selectedProductId = product.id;
+        storeState.selectedColor = product.colors[0] || '';
+        storeState.selectedSize = product.sizes[0] || 'M';
+    }
     
     if (!product) return;
     
@@ -1352,9 +1360,19 @@ function startCountdown() {
     const mElem = document.getElementById('timer-minutes');
     const sElem = document.getElementById('timer-seconds');
     
+    if (!hElem || !mElem || !sElem) return;
+    
     const pad = (n) => String(n).padStart(2, '0');
     
-    setInterval(() => {
+    const timerId = setInterval(() => {
+        const h = document.getElementById('timer-hours');
+        const m = document.getElementById('timer-minutes');
+        const s = document.getElementById('timer-seconds');
+        if (!h || !m || !s) {
+            clearInterval(timerId);
+            return;
+        }
+        
         seconds--;
         if (seconds < 0) {
             seconds = 59;
@@ -1370,9 +1388,9 @@ function startCountdown() {
                 }
             }
         }
-        hElem.textContent = pad(hours);
-        mElem.textContent = pad(minutes);
-        sElem.textContent = pad(seconds);
+        h.textContent = pad(hours);
+        m.textContent = pad(minutes);
+        s.textContent = pad(seconds);
     }, 1000);
 }
 
@@ -2307,14 +2325,27 @@ function deleteProduct(id) {
                 }
             });
             
-            // If the deleted product was selected, revert to first product
-            if (storeState.selectedProductId === id && db.products.length > 0) {
-                storeState.selectedProductId = db.products[0].id;
-                storeState.selectedColor = db.products[0].colors[0];
-                storeState.selectedSize = db.products[0].sizes[0];
+            // Ensure at least one remaining product is active on homepage
+            const hasActive = db.products.some(p => p.activeHomepage === true);
+            if (!hasActive && db.products.length > 0) {
+                db.products[0].activeHomepage = true;
+            }
+            
+            // If the deleted product was selected, revert to remaining active product
+            if (storeState.selectedProductId === id) {
+                if (db.products.length > 0) {
+                    const activeP = db.products.find(p => p.activeHomepage) || db.products[0];
+                    storeState.selectedProductId = activeP.id;
+                    storeState.selectedColor = activeP.colors[0] || '';
+                    storeState.selectedSize = activeP.sizes[0] || 'M';
+                } else {
+                    storeState.selectedProductId = null;
+                }
             }
             
             saveDb(db);
+            renderAdminDashboard();
+            renderPublicStore();
             showToast('Product deleted.', 'info');
         }
     );
